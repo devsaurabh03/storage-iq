@@ -1,6 +1,7 @@
-import java.util.Properties
-import java.io.FileInputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -11,6 +12,50 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val versionPropsFile = rootProject.file("version.properties")
+val versionProps = Properties()
+if (versionPropsFile.exists()) {
+    FileInputStream(versionPropsFile).use { versionProps.load(it) }
+}
+
+fun getGitCommitCount(): Int {
+    return try {
+        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            .directory(rootProject.rootDir)
+            .redirectErrorStream(true)
+            .start()
+        val count = process.inputStream.bufferedReader().readLine()?.trim()?.toIntOrNull() ?: 1
+        process.waitFor()
+        count
+    } catch (_: Exception) {
+        1
+    }
+}
+
+fun getGitShortHash(): String {
+    return try {
+        val process = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+            .directory(rootProject.rootDir)
+            .redirectErrorStream(true)
+            .start()
+        val hash = process.inputStream.bufferedReader().readLine()?.trim() ?: "local"
+        process.waitFor()
+        hash
+    } catch (_: Exception) {
+        "local"
+    }
+}
+
+val vMajor = versionProps.getProperty("VERSION_MAJOR", "1").toInt()
+val vMinor = versionProps.getProperty("VERSION_MINOR", "0").toInt()
+val vPatch = versionProps.getProperty("VERSION_PATCH", "0").toInt()
+val vBuild = versionProps.getProperty("VERSION_BUILD", "101").toInt()
+
+val gitCount = getGitCommitCount()
+val gitHash = getGitShortHash()
+val appVersionCode = vBuild + gitCount
+val appVersionName = "$vMajor.$vMinor.$vPatch.$gitCount"
+
 android {
     namespace = "com.storage.intelligence"
     compileSdk = 35
@@ -19,8 +64,11 @@ android {
         applicationId = "com.storage.intelligence"
         minSdk = 29
         targetSdk = 35
-        versionCode = 100
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+
+        buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
+        buildConfigField("int", "BUILD_NUMBER", "$appVersionCode")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -91,6 +139,31 @@ android {
     packaging {
         resources {
             excludes += "/META-INDEX/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            if (output != null) {
+                output.outputFileName = "StorageIQ-v${appVersionName}-${variant.name}.apk"
+            }
+        }
+    }
+}
+
+tasks.register("incrementBuildNumber") {
+    doLast {
+        if (versionPropsFile.exists()) {
+            val props = Properties()
+            FileInputStream(versionPropsFile).use { props.load(it) }
+            val current = props.getProperty("VERSION_BUILD", "101").toInt()
+            val next = current + 1
+            props.setProperty("VERSION_BUILD", next.toString())
+            props.setProperty("VERSION_NAME", "$vMajor.$vMinor.$vPatch.$next")
+            FileOutputStream(versionPropsFile).use { props.store(it, "Auto-incremented build version") }
+            println("Version updated: Build $next ($vMajor.$vMinor.$vPatch.$next)")
         }
     }
 }
