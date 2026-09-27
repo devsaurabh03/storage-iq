@@ -440,7 +440,8 @@ fun AppNavHost(
             composable(Routes.DUPLICATES) {
                 DuplicatesScreen(
                     viewModel = hiltViewModel(),
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToMessaging = { navController.navigate(Routes.MESSAGING) }
                 )
             }
 

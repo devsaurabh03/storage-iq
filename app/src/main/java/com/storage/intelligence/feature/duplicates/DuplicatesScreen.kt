@@ -5,11 +5,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,7 +33,8 @@ import com.storage.intelligence.domain.model.FileItem
 @Composable
 fun DuplicatesScreen(
     viewModel: DuplicatesViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToMessaging: (() -> Unit)? = null
 ) {
     val groupsState by viewModel.duplicateGroups.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
@@ -144,19 +145,60 @@ fun DuplicatesScreen(
                     val isAllDuplicatesSelected = groups.isNotEmpty() && selectedFiles.size >= groups.sumOf { it.files.size - 1 }
 
                     if (groups.isEmpty()) {
-                        EmptyStateCard(
-                            title = "No duplicate files found",
-                            description = "Your storage has no identical duplicate copies. You're all clear.",
+                        Column(
                             modifier = Modifier
                                 .align(Alignment.Center)
-                                .padding(24.dp)
-                        )
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            EmptyStateCard(
+                                title = "No duplicate files found",
+                                description = "Your storage has no identical duplicate copies across device folders."
+                            )
+                            if (onNavigateToMessaging != null) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Button(
+                                    onClick = onNavigateToMessaging,
+                                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Check WhatsApp & Telegram Duplicates")
+                                }
+                            }
+                        }
                     } else {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
+                            if (onNavigateToMessaging != null) {
+                                item {
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable(onClick = onNavigateToMessaging),
+                                        color = EmeraldPrimary.copy(alpha = 0.12f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Chat, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(20.dp))
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("Social Media & Messaging Duplicates", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = EmeraldPrimary)
+                                                Text("Find duplicate photos & videos inside WhatsApp and Telegram", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Text("Review →", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = EmeraldPrimary)
+                                        }
+                                    }
+                                }
+                            }
+
                             // 1. SELECT ALL / SUMMARY BANNER CARD
                             item {
                                 Card(

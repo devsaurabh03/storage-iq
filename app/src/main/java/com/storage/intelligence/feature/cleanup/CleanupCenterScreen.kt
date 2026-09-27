@@ -228,6 +228,21 @@ fun CleanupCenterScreen(
                                 onClick = onNavigateToStaleOptimize
                             )
 
+                            // Social Media & Messaging Duplicates (WhatsApp / Telegram)
+                            val waCat = overview.categoryBreakdowns.find { it.category == StorageCategory.WHATSAPP }
+                            val tgCat = overview.categoryBreakdowns.find { it.category == StorageCategory.TELEGRAM }
+                            val messagingBytes = (waCat?.totalSizeBytes ?: 0L) + (tgCat?.totalSizeBytes ?: 0L)
+
+                            StorageRecommendationCard(
+                                title = "Social Media & Messaging Duplicates",
+                                subtitle = "Detect forwarded duplicate media & cleanup WhatsApp & Telegram storage",
+                                sizeBytes = messagingBytes,
+                                actionLabel = "Review messaging duplicates →",
+                                icon = Icons.Default.Chat,
+                                iconColor = EmeraldPrimary,
+                                onClick = onNavigateToMessaging
+                            )
+
                             // Visually Similar Photos
                             StorageRecommendationCard(
                                 title = "Visually Similar Photos",
