@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,7 +43,8 @@ fun VideoActivityScreen(
     onPauseJob: (String) -> Unit,
     onResumeJob: (String) -> Unit,
     onCancelJob: (String) -> Unit,
-    onRetryJob: (String) -> Unit
+    onRetryJob: (String) -> Unit,
+    onNavigateBack: (() -> Unit)? = null
 ) {
     val activeJobs = jobs.filter { it.state == JobStatus.RUNNING || it.state == JobStatus.PAUSED }
     val completedJobs = jobs.filter { it.state == JobStatus.COMPLETED || it.state == JobStatus.FAILED }
@@ -56,6 +58,16 @@ fun VideoActivityScreen(
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
+                },
+                navigationIcon = {
+                    if (onNavigateBack != null) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
@@ -236,7 +248,7 @@ private fun ActiveJobCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             LinearProgressIndicator(
-                progress = job.progressPercent / 100f,
+                progress = { job.progressPercent / 100f },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(8.dp)

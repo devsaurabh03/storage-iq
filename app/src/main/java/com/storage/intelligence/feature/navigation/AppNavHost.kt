@@ -328,10 +328,11 @@ fun AppNavHost(
 
                 com.storage.intelligence.feature.video.ui.VideoActivityScreen(
                     jobs = uiState.activeJobs,
-                    onPauseJob = { id -> },
-                    onResumeJob = { id -> },
-                    onCancelJob = { id -> },
-                    onRetryJob = { id -> }
+                    onPauseJob = { id -> sharedVideoViewModel.pauseJob(id) },
+                    onResumeJob = { id -> sharedVideoViewModel.resumeJob(id) },
+                    onCancelJob = { id -> sharedVideoViewModel.cancelJob(id) },
+                    onRetryJob = { id -> sharedVideoViewModel.retryJob(id) },
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
 
@@ -391,8 +392,7 @@ fun AppNavHost(
             }
 
             composable(Routes.BENCHMARK_RESULT) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val result = uiState.lastBenchmarkResult ?: com.storage.intelligence.feature.video.benchmark.CodecBenchmarkMetrics(
                     codecName = "AV1",
                     timeToFirstFrameMs = 420,
@@ -417,8 +417,7 @@ fun AppNavHost(
 
 
             composable(Routes.CODEC_COMPARISON) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.lab.CodecComparisonScreen(
                     av1Result = uiState.lastBenchmarkResult,
