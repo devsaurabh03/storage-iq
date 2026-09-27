@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StorageIQ</string>
+    <string name="app_tagline">Your Personal Storage Intelligence</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_title_1">Know what\'s using your storage</string>
+    <string name="onboarding_desc_1">Get a clear picture of what\'s taking up space on your phone with zero clutter.</string>
+    <string name="onboarding_title_2">Find wasted space intelligently</string>
+    <string name="onboarding_desc_2">Discover exact duplicate videos, similar photos, huge old downloads, and messaging media.</string>
+    <string name="onboarding_title_3">You stay in total control</string>
+    <string name="onboarding_desc_3">We prioritize safety and trust. We never delete anything without your explicit confirmation.</string>
+    <string name="onboarding_cta">Analyze My Storage</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_next">Next</string>
+
+    <!-- Permissions -->
+    <string name="permission_title">Permission Required</string>
+    <string name="permission_desc">To analyze your storage, we need access to the media and files you choose to inspect.</string>
+    <string name="permission_grant_btn">Grant Permission</string>
+    <string name="permission_rationale">StorageIQ performs all analysis 100% on-device. Your personal photos and documents never leave your phone.</string>
+    <string name="permission_denied_warning">Limited functionality available without media permissions.</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">Storage Overview</string>
+    <string name="dashboard_used_of">%1$s / %2$s used</string>
+    <string name="dashboard_percentage_full">%1$d%% full</string>
+    <string name="dashboard_potentially_recoverable">Potentially Recoverable</string>
+    <string name="dashboard_review_btn">Review Storage</string>
+    <string name="dashboard_breakdown_header">Storage Breakdown</string>
+    <string name="dashboard_insights_header">Recent Insights</string>
+    <string name="dashboard_quick_actions">Quick Actions</string>
+
+    <!-- Categories -->
+    <string name="category_videos">Videos</string>
+    <string name="category_photos">Photos</string>
+    <string name="category_apps">Apps</string>
+    <string name="category_whatsapp">WhatsApp</string>
+    <string name="category_telegram">Telegram</string>
+    <string name="category_downloads">Downloads</string>
+    <string name="category_screenshots">Screenshots</string>
+    <string name="category_screen_recordings">Screen Recordings</string>
+    <string name="category_other">Other Files</string>
+
+    <!-- Intelligence Sections -->
+    <string name="intel_duplicate_videos">Duplicate Videos</string>
+    <string name="intel_duplicate_photos">Duplicate Photos</string>
+    <string name="intel_similar_photos">Similar Photos</string>
+    <string name="intel_large_files">Large Files</string>
+    <string name="intel_old_downloads">Old Downloads</string>
+    <string name="intel_screenshots">Screenshots</string>
+    <string name="intel_screen_recordings">Screen Recordings</string>
+    <string name="intel_whatsapp_media">WhatsApp Media</string>
+    <string name="intel_telegram_media">Telegram Media</string>
+    <string name="intel_apps">App Storage</string>
+    <string name="intel_timeline">Storage Growth</string>
+
+    <!-- Scanner -->
+    <string name="scanner_title">Analyzing Storage...</string>
+    <string name="scanner_progress_format">Analyzing %1$s of %2$s items</string>
+    <string name="scanner_phase_photos">Photos</string>
+    <string name="scanner_phase_videos">Videos</string>
+    <string name="scanner_phase_downloads">Downloads</string>
+    <string name="scanner_phase_duplicates">Duplicates &amp; Hashing</string>
+    <string name="scanner_phase_complete">Analysis Complete</string>
+    <string name="scanner_bg_notice">Analysis is running seamlessly in the background.</string>
+
+    <!-- Duplicate & Similar UX -->
+    <string name="duplicates_group_title">%1$d Copies (%2$s recoverable)</string>
+    <string name="duplicates_auto_select">Auto-select duplicates</string>
+    <string name="duplicates_preserve_note">At least 1 original copy is always preserved.</string>
+    <string name="similar_group_title">%1$d Similar Photos</string>
+    <string name="similar_keep_best">Recommended Keep: %1$s</string>
+
+    <!-- Large Files & Filters -->
+    <string name="large_files_threshold_all">All Large Files</string>
+    <string name="large_files_threshold_100mb">&gt; 100 MB</string>
+    <string name="large_files_threshold_500mb">&gt; 500 MB</string>
+    <string name="large_files_threshold_1gb">&gt; 1 GB</string>
+    <string name="large_files_threshold_2gb">&gt; 2 GB</string>
+
+    <!-- Downloads & Age -->
+    <string name="downloads_age_90">Older than 90 days</string>
+    <string name="downloads_age_1yr">Older than 1 year</string>
+    <string name="downloads_disclaimer">You may want to review these items before taking action.</string>
+
+    <!-- Cleanup Center & Deletion -->
+    <string name="cleanup_title">Review &amp; Clean</string>
+    <string name="cleanup_confirm_title">Delete %1$d files?</string>
+    <string name="cleanup_confirm_desc">You are about to remove %1$d files (%2$s). These items will be removed from your device storage or moved to system Trash.</string>
+    <string name="cleanup_btn_cancel">Cancel</string>
+    <string name="cleanup_btn_delete">Delete %1$d Files</string>
+    <string name="cleanup_success_title">Cleanup Complete</string>
+    <string name="cleanup_success_desc">%1$s recovered across %2$d files.</string>
+    <string name="cleanup_trash_guideline">Items moved to Trash. You can recover them anytime from your device\'s Trash or Recently Deleted folder.</string>
+
+    <!-- Empty States -->
+    <string name="empty_duplicates">No exact duplicates found. Your library looks clean!</string>
+    <string name="empty_similar">No visually similar photo clusters found.</string>
+    <string name="empty_large_files">No large files found over the selected threshold.</string>
+    <string name="empty_downloads">No old downloads detected.</string>
+
+    <!-- Search -->
+    <string name="search_placeholder">Search files (e.g. videos over 1GB, screenshots)</string>
+    <string name="search_no_results">No matching files found.</string>
+
+    <!-- Subscription & Paywall -->
+    <string name="paywall_title">Deep Storage Intelligence</string>
+    <string name="paywall_subtitle">All premium intelligence features are unlocked and free</string>
+    <string name="paywall_feature_1">Deep duplicate video detection</string>
+    <string name="paywall_feature_2">Similar photo visual clustering</string>
+    <string name="paywall_feature_3">Messaging media breakdown (WhatsApp/Telegram)</string>
+    <string name="paywall_feature_4">Historical storage growth timeline</string>
+    <string name="paywall_feature_5">Advanced multi-predicate filters</string>
+    <string name="paywall_trial_cta">Continue (Free Access)</string>
+    <string name="paywall_restore">Sync Status</string>
+    <string name="paywall_terms_disclosure">All features are currently completely free with no payment or trial renewal required.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_privacy">Privacy Policy &amp; Guarantees</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_offline_guarantee">100% On-Device Processing Guarantee</string>
+    <string name="settings_open_app_storage">Open App Storage Settings</string>
+
+    <!-- Nav Items -->
+    <string name="nav_home">Home</string>
+    <string name="nav_review">Review</string>
+    <string name="nav_performance">Performance</string>
+    <string name="nav_timeline">Timeline</string>
+    <string name="nav_settings">Settings</string>
+</resources>

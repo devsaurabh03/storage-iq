@@ -1,0 +1,164 @@
+package com.storage.intelligence.feature.downloads
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.storage.intelligence.R
+import com.storage.intelligence.core.common.AgeThreshold
+import com.storage.intelligence.core.common.FormattingUtils
+import com.storage.intelligence.core.common.Result
+import com.storage.intelligence.core.ui.components.FileCard
+import com.storage.intelligence.core.ui.components.SafeDeleteDialog
+import com.storage.intelligence.core.ui.theme.EmeraldPrimary
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DownloadsScreen(
+    viewModel: DownloadsViewModel,
+    onNavigateBack: () -> Unit
+) {
+    val downloadsState by viewModel.downloads.collectAsState()
+    val selectedAge by viewModel.selectedAge.collectAsState()
+    val selectedFiles by viewModel.selectedFiles.collectAsState()
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(text = stringResource(R.string.intel_old_downloads)) },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            if (selectedFiles.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    tonalElevation = 8.dp
+                ) {
+                    val files = (downloadsState as? Result.Success)?.data ?: emptyList()
+                    val selectedItems = files.filter { selectedFiles.contains(it.id) }
+                    val totalBytes = selectedItems.sumOf { it.sizeBytes }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "${selectedItems.size} selected",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = FormattingUtils.formatBytes(totalBytes),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = EmeraldPrimary
+                            )
+                        }
+
+                        Button(
+                            onClick = { showDeleteDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = "Delete")
+                        }
+                    }
+                }
+            }
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = selectedAge == AgeThreshold.OLDER_THAN_90_DAYS,
+                    onClick = { viewModel.setAgeThreshold(AgeThreshold.OLDER_THAN_90_DAYS) },
+                    label = { Text(stringResource(R.string.downloads_age_90)) }
+                )
+                FilterChip(
+                    selected = selectedAge == AgeThreshold.OLDER_THAN_1_YEAR,
+                    onClick = { viewModel.setAgeThreshold(AgeThreshold.OLDER_THAN_1_YEAR) },
+                    label = { Text(stringResource(R.string.downloads_age_1yr)) }
+                )
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
+                when (val state = downloadsState) {
+                    is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    is Result.Error -> Text("Error loading downloads", modifier = Modifier.align(Alignment.Center))
+                    is Result.Success -> {
+                        val files = state.data
+                        if (files.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.empty_downloads),
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(24.dp),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(files) { fileItem ->
+                                    val isChecked = selectedFiles.contains(fileItem.id)
+                                    FileCard(
+                                        fileItem = fileItem.copy(isSelectedForDeletion = isChecked),
+                                        onSelectionChanged = { checked ->
+                                            viewModel.toggleSelection(fileItem.id, checked)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        if (showDeleteDialog) {
+                            val selectedItems = files.filter { selectedFiles.contains(it.id) }
+                            SafeDeleteDialog(
+                                selectedCount = selectedItems.size,
+                                totalSizeBytes = selectedItems.sumOf { it.sizeBytes },
+                                onConfirmDelete = {
+                                    showDeleteDialog = false
+                                    viewModel.deleteSelected(files)
+                                },
+                                onDismiss = { showDeleteDialog = false }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

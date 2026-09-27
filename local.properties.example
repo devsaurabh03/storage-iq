@@ -1,0 +1,3 @@
+# Example local.properties configuration
+# Replace with the path to your Android SDK installation
+sdk.dir=C:/Users/YourUsername/AppData/Local/Android/Sdk
