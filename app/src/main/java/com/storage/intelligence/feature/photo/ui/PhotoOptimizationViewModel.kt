@@ -79,7 +79,7 @@ class PhotoOptimizationViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(candidates = updated, totalEstimatedSavingsBytes = totalSavings)
     }
 
-    fun optimizeSelected(deleteOriginals: Boolean, onComplete: (Long, Int) -> Unit) {
+    fun optimizeSelected(deleteOriginals: Boolean, onComplete: (Long, Int, String?) -> Unit) {
         val selected = _uiState.value.candidates.filter { it.isSelected }
         if (selected.isEmpty()) return
 
@@ -93,6 +93,7 @@ class PhotoOptimizationViewModel @Inject constructor(
 
             var savedTotal = 0L
             var successCount = 0
+            var lastErrorMessage: String? = null
             val filesToDelete = mutableListOf<FileItem>()
 
             selected.forEachIndexed { index, candidate ->
@@ -105,6 +106,8 @@ class PhotoOptimizationViewModel @Inject constructor(
                     if (deleteOriginals) {
                         filesToDelete.add(candidate.fileItem)
                     }
+                } else {
+                    lastErrorMessage = result.errorMessage
                 }
                 _uiState.value = _uiState.value.copy(
                     totalSavedSoFarBytes = savedTotal,
@@ -117,7 +120,7 @@ class PhotoOptimizationViewModel @Inject constructor(
             }
 
             _uiState.value = _uiState.value.copy(isOptimizing = false)
-            onComplete(savedTotal, successCount)
+            onComplete(savedTotal, successCount, lastErrorMessage)
             loadPhotoCandidates()
         }
     }

@@ -259,8 +259,12 @@ fun PhotoOptimizationScreen(
                         Button(
                             onClick = {
                                 showConfirmDialog = false
-                                viewModel.optimizeSelected(deleteOriginalsChoice) { saved, count ->
-                                    resultSummaryText = "$count photos optimized! ${FormattingUtils.formatBytes(saved)} recovered."
+                                viewModel.optimizeSelected(deleteOriginalsChoice) { saved, count, errorMsg ->
+                                    resultSummaryText = if (count > 0) {
+                                        "$count photos optimized! ${FormattingUtils.formatBytes(saved)} recovered."
+                                    } else {
+                                        "Optimization couldn't convert photos: ${errorMsg ?: "No storage savings possible."}"
+                                    }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)

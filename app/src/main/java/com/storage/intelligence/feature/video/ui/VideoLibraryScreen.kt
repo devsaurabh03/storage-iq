@@ -15,6 +15,9 @@ import com.storage.intelligence.core.ui.components.VideoItemCard
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.feature.video.engine.VideoCharacteristics
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+
 enum class VideoSortFilter(val displayName: String) {
     RECOMMENDED("Recommended"),
     LARGEST("Largest"),
@@ -26,6 +29,9 @@ enum class VideoSortFilter(val displayName: String) {
 fun VideoLibraryScreen(
     videos: List<VideoCharacteristics>,
     onVideoClick: (VideoCharacteristics) -> Unit,
+    onPlayClick: ((VideoCharacteristics) -> Unit)? = null,
+    onOptimizeClick: ((VideoCharacteristics) -> Unit)? = null,
+    onNavigateBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var activeFilter by remember { mutableStateOf(VideoSortFilter.RECOMMENDED) }
@@ -50,6 +56,13 @@ fun VideoLibraryScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
+                },
+                navigationIcon = {
+                    if (onNavigateBack != null) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
@@ -97,14 +110,16 @@ fun VideoLibraryScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(sortedVideos) { video ->
                         val estSavings = (video.sizeBytes * 0.55).toLong()
                         VideoItemCard(
                             video = video,
                             estimatedSavingsBytes = estSavings,
-                            onClick = { onVideoClick(video) }
+                            onClick = { onVideoClick(video) },
+                            onPlayClick = { (onPlayClick ?: onVideoClick)(video) },
+                            onOptimizeClick = { (onOptimizeClick ?: onVideoClick)(video) }
                         )
                     }
                 }

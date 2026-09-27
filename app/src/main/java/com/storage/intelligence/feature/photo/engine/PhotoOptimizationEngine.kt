@@ -14,6 +14,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -81,40 +82,66 @@ class PhotoOptimizationEngine @Inject constructor(
         config: PhotoOptimizationConfig = PhotoOptimizationConfig()
     ): PhotoOptimizationResult = withContext(Dispatchers.IO) {
         val originalFile = File(candidate.path)
-        if (!originalFile.exists() || !originalFile.canRead()) {
+        val originalLength = when {
+            originalFile.exists() && originalFile.length() > 0L -> originalFile.length()
+            candidate.sizeBytes > 0L -> candidate.sizeBytes
+            else -> 0L
+        }
+
+        // Open input stream safely (via File or MediaStore ContentResolver)
+        val inputStream = try {
+            if (originalFile.exists() && originalFile.canRead()) {
+                FileInputStream(originalFile)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            val contentUri = android.content.ContentUris.withAppendedId(
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                candidate.id
+            )
+            context.contentResolver.openInputStream(contentUri)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (inputStream == null) {
             return@withContext PhotoOptimizationResult(
                 fileId = candidate.id,
                 originalPath = candidate.path,
                 optimizedPath = "",
-                originalSizeBytes = candidate.sizeBytes,
+                originalSizeBytes = originalLength,
                 optimizedSizeBytes = 0L,
                 savedBytes = 0L,
                 success = false,
-                errorMessage = "Original photo file is inaccessible."
+                errorMessage = "Cannot access image data (permission or file missing)."
             )
         }
 
-        // 1. Temporary output file
+        // 1. Temporary output file in app cache
         val tempDir = File(context.cacheDir, "photo_opt").apply { if (!exists()) mkdirs() }
         val tempFile = File(tempDir, "opt_${System.currentTimeMillis()}_${candidate.id}.${config.format.extension}")
 
         try {
             // 2. Decode bitmap safely
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = false
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            }
-            val bitmap = BitmapFactory.decodeFile(originalFile.absolutePath, options)
-                ?: return@withContext PhotoOptimizationResult(
-                    fileId = candidate.id,
-                    originalPath = candidate.path,
-                    optimizedPath = "",
-                    originalSizeBytes = originalFile.length(),
-                    optimizedSizeBytes = 0L,
-                    savedBytes = 0L,
-                    success = false,
-                    errorMessage = "Failed to decode image bitmap."
-                )
+            val bitmap = inputStream.use { stream ->
+                val options = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = false
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                BitmapFactory.decodeStream(stream, null, options)
+            } ?: return@withContext PhotoOptimizationResult(
+                fileId = candidate.id,
+                originalPath = candidate.path,
+                optimizedPath = "",
+                originalSizeBytes = originalLength,
+                optimizedSizeBytes = 0L,
+                savedBytes = 0L,
+                success = false,
+                errorMessage = "Failed to decode image bitmap."
+            )
 
             // Optional downscaling if maxDimension is configured
             val processedBitmap = if (config.maxDimension != null && (bitmap.width > config.maxDimension || bitmap.height > config.maxDimension)) {
@@ -141,7 +168,6 @@ class PhotoOptimizationEngine @Inject constructor(
                 TargetPhotoFormat.JPEG -> Bitmap.CompressFormat.JPEG
                 TargetPhotoFormat.AVIF -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        // Android 14+ AVIF format support
                         Bitmap.CompressFormat.WEBP_LOSSY
                     } else {
                         Bitmap.CompressFormat.WEBP_LOSSY
@@ -161,7 +187,7 @@ class PhotoOptimizationEngine @Inject constructor(
                     fileId = candidate.id,
                     originalPath = candidate.path,
                     optimizedPath = "",
-                    originalSizeBytes = originalFile.length(),
+                    originalSizeBytes = originalLength,
                     optimizedSizeBytes = 0L,
                     savedBytes = 0L,
                     success = false,
@@ -169,27 +195,35 @@ class PhotoOptimizationEngine @Inject constructor(
                 )
             }
 
-            // Validate that test decode succeeds
-            val testDecode = BitmapFactory.decodeFile(tempFile.absolutePath, BitmapFactory.Options().apply { inJustDecodeBounds = true })
-            if (testDecode == null && (BitmapFactory.Options().outWidth <= 0 || BitmapFactory.Options().outHeight <= 0)) {
-                tempFile.delete()
-                return@withContext PhotoOptimizationResult(
-                    fileId = candidate.id,
-                    originalPath = candidate.path,
-                    optimizedPath = "",
-                    originalSizeBytes = originalFile.length(),
-                    optimizedSizeBytes = 0L,
-                    savedBytes = 0L,
-                    success = false,
-                    errorMessage = "Output image failed validation decode test."
-                )
+            // Copy EXIF metadata if enabled and source file exists
+            if (config.preserveExif && originalFile.exists() && originalFile.canRead()) {
+                try {
+                    val srcExif = android.media.ExifInterface(originalFile.absolutePath)
+                    val destExif = android.media.ExifInterface(tempFile.absolutePath)
+                    val tags = arrayOf(
+                        android.media.ExifInterface.TAG_ORIENTATION,
+                        android.media.ExifInterface.TAG_DATETIME,
+                        android.media.ExifInterface.TAG_MAKE,
+                        android.media.ExifInterface.TAG_MODEL,
+                        android.media.ExifInterface.TAG_FLASH,
+                        android.media.ExifInterface.TAG_WHITE_BALANCE
+                    )
+                    for (tag in tags) {
+                        val value = srcExif.getAttribute(tag)
+                        if (value != null) {
+                            destExif.setAttribute(tag, value)
+                        }
+                    }
+                    destExif.saveAttributes()
+                } catch (_: Exception) {
+                    // EXIF copy failure is non-fatal
+                }
             }
 
-            val originalLength = originalFile.length()
             val optimizedLength = tempFile.length()
 
             // If compressed file is somehow larger than original, preserve original and skip
-            if (optimizedLength >= originalLength) {
+            if (originalLength > 0L && optimizedLength >= originalLength) {
                 tempFile.delete()
                 return@withContext PhotoOptimizationResult(
                     fileId = candidate.id,
@@ -203,18 +237,79 @@ class PhotoOptimizationEngine @Inject constructor(
                 )
             }
 
-            // 5. Commit output to dedicated optimized pictures directory
-            val outputDir = File(originalFile.parentFile ?: context.filesDir, "OptimizedPhotos").apply { if (!exists()) mkdirs() }
-            val finalFile = File(outputDir, "${originalFile.nameWithoutExtension}_opt.${config.format.extension}")
-            tempFile.copyTo(finalFile, overwrite = true)
+            // 5. Commit output safely to Pictures/OptimizedPhotos
+            val baseName = candidate.name.substringBeforeLast('.')
+            val targetFileName = "${baseName}_optimized.${config.format.extension}"
+            var finalDestinationPath = ""
+            var writeSuccess = false
+
+            // Primary method: Modern Android MediaStore API (Scoped Storage compliant)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, targetFileName)
+                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, config.format.mimeType)
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_PICTURES}/OptimizedPhotos")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+
+                    val insertUri = context.contentResolver.insert(
+                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        contentValues
+                    )
+
+                    if (insertUri != null) {
+                        context.contentResolver.openOutputStream(insertUri)?.use { outStream ->
+                            tempFile.inputStream().use { inStream ->
+                                inStream.copyTo(outStream)
+                            }
+                        }
+                        contentValues.clear()
+                        contentValues.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                        context.contentResolver.update(insertUri, contentValues, null, null)
+
+                        finalDestinationPath = insertUri.toString()
+                        writeSuccess = true
+                    }
+                } catch (e: Exception) {
+                    writeSuccess = false
+                }
+            }
+
+            // Fallback: App external media directory or public Pictures directory
+            if (!writeSuccess) {
+                try {
+                    val fallbackDir = File(
+                        context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES) ?: context.filesDir,
+                        "OptimizedPhotos"
+                    ).apply { if (!exists()) mkdirs() }
+                    val finalFile = File(fallbackDir, targetFileName)
+                    tempFile.copyTo(finalFile, overwrite = true)
+                    finalDestinationPath = finalFile.absolutePath
+                    writeSuccess = true
+                } catch (e: Exception) {
+                    tempFile.delete()
+                    return@withContext PhotoOptimizationResult(
+                        fileId = candidate.id,
+                        originalPath = candidate.path,
+                        optimizedPath = "",
+                        originalSizeBytes = originalLength,
+                        optimizedSizeBytes = 0L,
+                        savedBytes = 0L,
+                        success = false,
+                        errorMessage = "Storage write failed: ${e.localizedMessage}"
+                    )
+                }
+            }
+
             tempFile.delete()
 
             val savedBytes = (originalLength - optimizedLength).coerceAtLeast(0L)
 
             return@withContext PhotoOptimizationResult(
                 fileId = candidate.id,
-                originalPath = originalFile.absolutePath,
-                optimizedPath = finalFile.absolutePath,
+                originalPath = candidate.path,
+                optimizedPath = finalDestinationPath,
                 originalSizeBytes = originalLength,
                 optimizedSizeBytes = optimizedLength,
                 savedBytes = savedBytes,
@@ -227,7 +322,7 @@ class PhotoOptimizationEngine @Inject constructor(
                 fileId = candidate.id,
                 originalPath = candidate.path,
                 optimizedPath = "",
-                originalSizeBytes = originalFile.length(),
+                originalSizeBytes = originalLength,
                 optimizedSizeBytes = 0L,
                 savedBytes = 0L,
                 success = false,

@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -111,7 +112,7 @@ fun AppNavHost(
 
     val showBottomBar = currentRoute in listOf(Routes.DASHBOARD, Routes.PERFORMANCE, Routes.CLEANUP, Routes.ME)
 
-
+    val sharedVideoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
 
     Scaffold(
         bottomBar = {
@@ -287,8 +288,7 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_HOME) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.VideoHomeScreen(
                     totalVideoBytes = uiState.totalStorageBytes,
@@ -302,21 +302,29 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_LIBRARY) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.VideoLibraryScreen(
                     videos = uiState.videos,
                     onVideoClick = { video ->
-                        videoViewModel.selectVideo(video)
+                        sharedVideoViewModel.selectVideo(video)
                         navController.navigate(Routes.VIDEO_DETAIL)
-                    }
+                    },
+                    onPlayClick = { video ->
+                        sharedVideoViewModel.selectVideo(video)
+                        navController.navigate(Routes.VIDEO_DETAIL)
+                    },
+                    onOptimizeClick = { video ->
+                        sharedVideoViewModel.selectVideo(video)
+                        sharedVideoViewModel.showCompressionSheet(true)
+                        navController.navigate(Routes.VIDEO_DETAIL)
+                    },
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
 
             composable(Routes.VIDEO_ACTIVITY) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.VideoActivityScreen(
                     jobs = uiState.activeJobs,
@@ -328,8 +336,7 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_DETAIL) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val video = uiState.selectedVideo
                 val plan = uiState.selectedVideoPlan
 
@@ -337,7 +344,7 @@ fun AppNavHost(
                     com.storage.intelligence.feature.video.ui.VideoDetailScreen(
                         video = video,
                         onNavigateBack = { navController.popBackStack() },
-                        onStartOptimization = { videoViewModel.showCompressionSheet(true) },
+                        onStartOptimization = { sharedVideoViewModel.showCompressionSheet(true) },
                         showDebugHud = uiState.isPerformanceHudEnabled
                     )
 
@@ -345,31 +352,37 @@ fun AppNavHost(
                         com.storage.intelligence.feature.video.ui.VideoCompressionSheet(
                             video = video,
                             currentPlan = plan,
-                            onModeSelected = { mode -> videoViewModel.updateOptimizationMode(mode) },
+                            onModeSelected = { mode -> sharedVideoViewModel.updateOptimizationMode(mode) },
                             onStartOptimization = { optPlan ->
-                                videoViewModel.startOptimization(optPlan)
+                                sharedVideoViewModel.startOptimization(optPlan)
                                 navController.navigate(Routes.VIDEO_ACTIVITY)
                             },
-                            onDismiss = { videoViewModel.showCompressionSheet(false) }
+                            onDismiss = { sharedVideoViewModel.showCompressionSheet(false) }
                         )
+                    }
+                } else {
+                    LaunchedEffect(Unit) {
+                        if (uiState.videos.isNotEmpty()) {
+                            sharedVideoViewModel.selectVideo(uiState.videos.first())
+                        } else {
+                            navController.popBackStack()
+                        }
                     }
                 }
             }
 
-
             composable(Routes.PERFORMANCE_LAB) {
-                val videoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
-                val uiState by videoViewModel.uiState.collectAsState()
+                val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val profile = uiState.deviceProfile ?: com.storage.intelligence.feature.video.codec.CodecCapabilityManager.detectCapabilities()
 
                 com.storage.intelligence.feature.video.ui.lab.PerformanceLabScreen(
                     deviceProfile = profile,
                     onRunBenchmark = { testCase ->
-                        videoViewModel.runBenchmark(testCase)
+                        sharedVideoViewModel.runBenchmark(testCase)
                         navController.navigate(Routes.BENCHMARK_RESULT)
                     },
                     onRunMemoryLeakTest = {
-                        videoViewModel.runBenchmark("memory_leak_20x")
+                        sharedVideoViewModel.runBenchmark("memory_leak_20x")
                         navController.navigate(Routes.BENCHMARK_RESULT)
                     },
                     onViewCodecComparison = { navController.navigate(Routes.CODEC_COMPARISON) },

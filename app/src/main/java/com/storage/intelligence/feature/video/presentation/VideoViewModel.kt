@@ -140,52 +140,140 @@ class VideoViewModel @Inject constructor(
     }
 
     private fun scanMediaStoreVideos(): List<VideoCharacteristics> {
-        val dummyFile = File(context.cacheDir, "sample_vacation.mp4")
-        val v1 = VideoCharacteristics(
-            file = dummyFile,
-            name = "Vacation.mp4",
-            sizeBytes = 1_095_216_640L, // 1.02 GB
-            durationMs = 762_000L,
-            width = 3840,
-            height = 2160,
-            fps = 60,
-            bitrateBps = 42_000_000,
-            codecName = "H.264",
-            mimeType = "video/avc",
-            isHdr = true,
-            audioCodec = "AAC"
-        )
+        val resultList = mutableListOf<VideoCharacteristics>()
+        try {
+            val projection = arrayOf(
+                android.provider.MediaStore.Video.Media._ID,
+                android.provider.MediaStore.Video.Media.DATA,
+                android.provider.MediaStore.Video.Media.DISPLAY_NAME,
+                android.provider.MediaStore.Video.Media.SIZE,
+                android.provider.MediaStore.Video.Media.DURATION,
+                android.provider.MediaStore.Video.Media.WIDTH,
+                android.provider.MediaStore.Video.Media.HEIGHT,
+                android.provider.MediaStore.Video.Media.MIME_TYPE
+            )
 
-        val v2 = VideoCharacteristics(
-            file = dummyFile,
-            name = "Drone_Footage_4K.mp4",
-            sizeBytes = 2_450_000_000L, // 2.45 GB
-            durationMs = 1_200_000L,
-            width = 3840,
-            height = 2160,
-            fps = 60,
-            bitrateBps = 50_000_000,
-            codecName = "H.264",
-            mimeType = "video/avc",
-            isHdr = false,
-            audioCodec = "AAC"
-        )
+            val uri = android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val cursor = context.contentResolver.query(
+                uri,
+                projection,
+                "${android.provider.MediaStore.Video.Media.SIZE} > 0",
+                null,
+                "${android.provider.MediaStore.Video.Media.SIZE} DESC"
+            )
 
-        val v3 = VideoCharacteristics(
-            file = dummyFile,
-            name = "Family_Event_1080p.mp4",
-            sizeBytes = 650_000_000L, // 650 MB
-            durationMs = 900_000L,
-            width = 1920,
-            height = 1080,
-            fps = 30,
-            bitrateBps = 12_000_000,
-            codecName = "H.264",
-            mimeType = "video/avc",
-            isHdr = false,
-            audioCodec = "AAC"
-        )
+            cursor?.use { c ->
+                val pathCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DATA)
+                val nameCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DISPLAY_NAME)
+                val sizeCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.SIZE)
+                val durCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DURATION)
+                val widthCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.WIDTH)
+                val heightCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.HEIGHT)
+                val mimeCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.MIME_TYPE)
 
-        return listOf(v1, v2, v3)
+                while (c.moveToNext()) {
+                    val path = c.getString(pathCol) ?: continue
+                    val file = File(path)
+                    val size = c.getLong(sizeCol)
+                    if (size <= 0L) continue
+
+                    val name = c.getString(nameCol) ?: file.name
+                    val duration = c.getLong(durCol)
+                    val width = c.getInt(widthCol).let { if (it > 0) it else 1920 }
+                    val height = c.getInt(heightCol).let { if (it > 0) it else 1080 }
+                    val mime = c.getString(mimeCol) ?: "video/mp4"
+
+                    val item = try {
+                        if (file.exists() && file.canRead()) {
+                            VideoMetadataExtractor.extractCharacteristics(file)
+                        } else {
+                            VideoCharacteristics(
+                                file = file,
+                                name = name,
+                                sizeBytes = size,
+                                durationMs = duration,
+                                width = width,
+                                height = height,
+                                fps = 30,
+                                bitrateBps = if (duration > 0) ((size * 8000) / duration).toInt() else 12_000_000,
+                                codecName = if (mime.contains("hevc") || mime.contains("h265")) "HEVC" else "H.264",
+                                mimeType = mime,
+                                isHdr = false,
+                                audioCodec = "AAC"
+                            )
+                        }
+                    } catch (_: Exception) {
+                        VideoCharacteristics(
+                            file = file,
+                            name = name,
+                            sizeBytes = size,
+                            durationMs = duration,
+                            width = width,
+                            height = height,
+                            fps = 30,
+                            bitrateBps = if (duration > 0) ((size * 8000) / duration).toInt() else 12_000_000,
+                            codecName = if (mime.contains("hevc") || mime.contains("h265")) "HEVC" else "H.264",
+                            mimeType = mime,
+                            isHdr = false,
+                            audioCodec = "AAC"
+                        )
+                    }
+                    resultList.add(item)
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore scan errors
+        }
+
+        // Only fallback to sample demonstration items if absolutely no videos exist on the physical device
+        if (resultList.isEmpty()) {
+            val dummyFile = File(context.cacheDir, "sample_vacation.mp4")
+            resultList.addAll(listOf(
+                VideoCharacteristics(
+                    file = dummyFile,
+                    name = "Vacation.mp4",
+                    sizeBytes = 1_095_216_640L,
+                    durationMs = 762_000L,
+                    width = 3840,
+                    height = 2160,
+                    fps = 60,
+                    bitrateBps = 42_000_000,
+                    codecName = "H.264",
+                    mimeType = "video/avc",
+                    isHdr = true,
+                    audioCodec = "AAC"
+                ),
+                VideoCharacteristics(
+                    file = dummyFile,
+                    name = "Drone_Footage_4K.mp4",
+                    sizeBytes = 2_450_000_000L,
+                    durationMs = 1_200_000L,
+                    width = 3840,
+                    height = 2160,
+                    fps = 60,
+                    bitrateBps = 50_000_000,
+                    codecName = "H.264",
+                    mimeType = "video/avc",
+                    isHdr = false,
+                    audioCodec = "AAC"
+                ),
+                VideoCharacteristics(
+                    file = dummyFile,
+                    name = "Family_Event_1080p.mp4",
+                    sizeBytes = 650_000_000L,
+                    durationMs = 900_000L,
+                    width = 1920,
+                    height = 1080,
+                    fps = 30,
+                    bitrateBps = 12_000_000,
+                    codecName = "H.264",
+                    mimeType = "video/avc",
+                    isHdr = false,
+                    audioCodec = "AAC"
+                )
+            ))
+        }
+
+        return resultList
     }
 }
