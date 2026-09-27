@@ -40,7 +40,8 @@ fun DashboardScreen(
     onNavigateToOtherStorage: () -> Unit = {},
     onNavigateToMessaging: () -> Unit = {},
     onNavigateToPaywall: () -> Unit = {},
-    onNavigateToPerformance: () -> Unit = {}
+    onNavigateToPerformance: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val cpuSnapshot by viewModel.cpuSnapshot.collectAsState()
@@ -76,6 +77,9 @@ fun DashboardScreen(
                     }
                     IconButton(onClick = onNavigateToSearch) {
                         Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
+                    }
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings & Logs")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)

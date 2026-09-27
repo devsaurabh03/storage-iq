@@ -37,6 +37,15 @@ fun SimilarPhotosScreen(
     val previewController = remember { FilePreviewController() }
     val previewState by previewController.previewState.collectAsState()
 
+    val deleteLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val groups = (groupsState as? Result.Success)?.data ?: emptyList()
+            viewModel.deleteSelected(groups)
+        }
+    }
+
     if (previewState.isVisible && previewState.fileItem != null) {
         FilePreviewDialog(
             fileItem = previewState.fileItem!!,
@@ -162,7 +171,27 @@ fun SimilarPhotosScreen(
                             totalSizeBytes = selectedItems.sumOf { it.sizeBytes },
                             onConfirmDelete = {
                                 showDeleteDialog = false
-                                viewModel.deleteSelected(groups)
+                                if (selectedItems.isNotEmpty()) {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !viewModel.hasAllFilesAccess()) {
+                                        try {
+                                            val uris = selectedItems.map {
+                                                android.content.ContentUris.withAppendedId(
+                                                    android.provider.MediaStore.Files.getContentUri("external"),
+                                                    it.id
+                                                )
+                                            }
+                                            val pi = android.provider.MediaStore.createDeleteRequest(context.contentResolver, uris)
+                                            deleteLauncher.launch(
+                                                androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
+                                            )
+                                        } catch (e: Exception) {
+                                            com.storage.intelligence.core.logging.AppLogger.e("SimilarPhotosScreen", "createDeleteRequest failed: ${e.message}", e)
+                                            viewModel.deleteSelected(groups)
+                                        }
+                                    } else {
+                                        viewModel.deleteSelected(groups)
+                                    }
+                                }
                             },
                             onDismiss = { showDeleteDialog = false }
                         )

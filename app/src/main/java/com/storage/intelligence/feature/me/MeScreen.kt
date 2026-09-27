@@ -30,7 +30,8 @@ fun MeScreen(
     viewModel: MeViewModel,
     onNavigateToActivity: () -> Unit,
     onNavigateToPerformanceLab: () -> Unit,
-    onNavigateToPaywall: () -> Unit
+    onNavigateToPaywall: () -> Unit,
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showTrustCenterSheet by remember { mutableStateOf(false) }
@@ -46,6 +47,9 @@ fun MeScreen(
                 actions = {
                     IconButton(onClick = { showTrustCenterSheet = true }) {
                         Icon(imageVector = Icons.Default.Shield, contentDescription = "Trust Center", tint = EmeraldPrimary)
+                    }
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings & Logs")
                     }
                 }
             )
@@ -253,7 +257,47 @@ fun MeScreen(
                 }
             }
 
-            // 5. Trust & Privacy
+            // 5. Diagnostic Logs & System
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { onNavigateToSettings() },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(imageVector = Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Diagnostic Logs & Settings",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "View live logs on phone, save/export to Downloads folder, or share crash reports.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
+            // 6. Trust & Privacy
             item {
                 Card(
                     modifier = Modifier

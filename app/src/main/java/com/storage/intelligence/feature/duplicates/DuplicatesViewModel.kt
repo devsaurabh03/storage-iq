@@ -17,8 +17,15 @@ class DuplicatesViewModel @Inject constructor(
     detectDuplicatesUseCase: DetectDuplicatesUseCase,
     private val deleteSelectedFilesUseCase: DeleteSelectedFilesUseCase,
     private val storageRepository: com.storage.intelligence.domain.repository.StorageRepository,
-    private val duplicateRepository: com.storage.intelligence.domain.repository.DuplicateRepository
+    private val duplicateRepository: com.storage.intelligence.domain.repository.DuplicateRepository,
+    val permissionManager: com.storage.intelligence.core.permissions.PermissionManager
 ) : ViewModel() {
+
+    fun hasAllFilesAccess(): Boolean = permissionManager.hasAllFilesAccess()
+
+    fun requestAllFilesAccess(context: android.content.Context) {
+        permissionManager.requestAllFilesAccess(context)
+    }
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()

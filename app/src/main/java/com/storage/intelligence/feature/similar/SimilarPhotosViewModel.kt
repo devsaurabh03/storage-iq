@@ -20,8 +20,15 @@ import javax.inject.Inject
 @HiltViewModel
 class SimilarPhotosViewModel @Inject constructor(
     detectSimilarPhotosUseCase: DetectSimilarPhotosUseCase,
-    private val deleteSelectedFilesUseCase: DeleteSelectedFilesUseCase
+    private val deleteSelectedFilesUseCase: DeleteSelectedFilesUseCase,
+    val permissionManager: com.storage.intelligence.core.permissions.PermissionManager
 ) : ViewModel() {
+
+    fun hasAllFilesAccess(): Boolean = permissionManager.hasAllFilesAccess()
+
+    fun requestAllFilesAccess(context: android.content.Context) {
+        permissionManager.requestAllFilesAccess(context)
+    }
 
     val similarGroups: StateFlow<Result<List<SimilarPhotoGroup>>> = detectSimilarPhotosUseCase()
         .map <List<SimilarPhotoGroup>, Result<List<SimilarPhotoGroup>>> { Result.Success(it) }

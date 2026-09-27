@@ -20,6 +20,9 @@ class CleanupViewModel @Inject constructor(
 
     val uiState: StateFlow<Result<StorageOverview>> = getStorageOverviewUseCase()
         .map <StorageOverview, Result<StorageOverview>> { Result.Success(it) }
-        .catch { emit(Result.Error(it)) }
+        .catch { error ->
+            com.storage.intelligence.core.logging.AppLogger.e("CleanupViewModel", "Failed to load storage overview: ${error.message}", error)
+            emit(Result.Error(error))
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Result.Loading)
 }

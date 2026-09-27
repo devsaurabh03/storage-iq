@@ -45,6 +45,15 @@ fun DuplicatesScreen(
     val previewState by previewController.previewState.collectAsState()
     val context = LocalContext.current
 
+    val deleteLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val groups = (groupsState as? Result.Success)?.data ?: emptyList()
+            viewModel.deleteSelected(groups) {}
+        }
+    }
+
     if (previewState.isVisible && previewState.fileItem != null) {
         FilePreviewDialog(
             fileItem = previewState.fileItem!!,
@@ -197,6 +206,48 @@ fun DuplicatesScreen(
                                         }
                                     }
                                 }
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !viewModel.hasAllFilesAccess()) {
+                                item {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(14.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Warning,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "All Files Access Recommended",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                                Text(
+                                                    text = "Allow StorageIQ to clean duplicate files seamlessly without repeated Android system popups.",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Button(
+                                                onClick = { viewModel.requestAllFilesAccess(context) },
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                            ) {
+                                                Text("Allow", fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // 1. SELECT ALL / SUMMARY BANNER CARD
@@ -306,7 +357,31 @@ fun DuplicatesScreen(
                             totalSizeBytes = selectedItems.sumOf { it.sizeBytes },
                             onConfirmDelete = {
                                 showDeleteDialog = false
-                                viewModel.deleteSelected(groups) {}
+                                val toDelete = groups.flatMap { group ->
+                                    val preservedId = group.preservedFileId
+                                    group.files.filter { selectedFiles.contains(it.id) && it.id != preservedId }
+                                }
+                                if (toDelete.isNotEmpty()) {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !viewModel.hasAllFilesAccess()) {
+                                        try {
+                                            val uris = toDelete.map {
+                                                android.content.ContentUris.withAppendedId(
+                                                    android.provider.MediaStore.Files.getContentUri("external"),
+                                                    it.id
+                                                )
+                                            }
+                                            val pi = android.provider.MediaStore.createDeleteRequest(context.contentResolver, uris)
+                                            deleteLauncher.launch(
+                                                androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
+                                            )
+                                        } catch (e: Exception) {
+                                            com.storage.intelligence.core.logging.AppLogger.e("DuplicatesScreen", "MediaStore.createDeleteRequest failed: ${e.message}", e)
+                                            viewModel.deleteSelected(groups) {}
+                                        }
+                                    } else {
+                                        viewModel.deleteSelected(groups) {}
+                                    }
+                                }
                             },
                             onDismiss = { showDeleteDialog = false }
                         )
@@ -315,4 +390,5 @@ fun DuplicatesScreen(
             }
         }
     }
+}
 }

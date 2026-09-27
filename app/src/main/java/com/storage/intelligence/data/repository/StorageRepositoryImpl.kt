@@ -1,7 +1,12 @@
 package com.storage.intelligence.data.repository
 
+import android.content.ContentUris
+import android.content.Context
+import android.media.MediaScannerConnection
 import android.os.Environment
 import android.os.StatFs
+import android.provider.MediaStore
+import com.storage.intelligence.core.logging.AppLogger
 import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.core.common.SearchFilter
 import com.storage.intelligence.core.database.dao.FileMetadataDao
@@ -10,14 +15,18 @@ import com.storage.intelligence.data.scanner.MediaStoreScanner
 import com.storage.intelligence.data.scanner.ScanProgress
 import com.storage.intelligence.domain.model.*
 import com.storage.intelligence.domain.repository.StorageRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class StorageRepositoryImpl @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val scanner: MediaStoreScanner,
     private val fileDao: FileMetadataDao
 ) : StorageRepository {
@@ -280,25 +289,68 @@ class StorageRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun deleteFiles(files: List<FileItem>): Boolean {
-        return try {
-            val deletedIds = mutableListOf<Long>()
-            for (file in files) {
+    override suspend fun deleteFiles(files: List<FileItem>): Boolean = withContext(Dispatchers.IO) {
+        val deletedIds = mutableListOf<Long>()
+        val pathsToRescan = mutableListOf<String>()
+
+        for (file in files) {
+            var isDeleted = false
+
+            // Strategy 1: ContentResolver MediaStore deletion (deletes from MediaStore and device storage)
+            try {
+                val uri = ContentUris.withAppendedId(
+                    MediaStore.Files.getContentUri("external"),
+                    file.id
+                )
+                val rows = context.contentResolver.delete(uri, null, null)
+                if (rows > 0) {
+                    isDeleted = true
+                }
+            } catch (e: Exception) {
+                AppLogger.d("StorageRepository", "ContentResolver delete for ${file.path}: ${e.message}")
+            }
+
+            // Strategy 2: Direct filesystem deletion (works when All Files Access / MANAGE_EXTERNAL_STORAGE is granted)
+            try {
                 val f = File(file.path)
                 if (f.exists()) {
-                    val deleted = f.delete()
-                    if (deleted) deletedIds.add(file.id)
+                    val fileDeleted = f.delete()
+                    if (fileDeleted) {
+                        isDeleted = true
+                        pathsToRescan.add(file.path)
+                    }
                 } else {
-                    deletedIds.add(file.id)
+                    // File already does not exist on disk
+                    isDeleted = true
                 }
+            } catch (e: Exception) {
+                AppLogger.d("StorageRepository", "File.delete for ${file.path}: ${e.message}")
             }
-            if (deletedIds.isNotEmpty()) {
-                fileDao.deleteByIds(deletedIds)
+
+            if (isDeleted) {
+                deletedIds.add(file.id)
+            } else {
+                AppLogger.e("StorageRepository", "Could not delete ${file.path}. Missing MANAGE_EXTERNAL_STORAGE or media write permission.")
             }
-            true
-        } catch (e: Exception) {
-            false
         }
+
+        if (pathsToRescan.isNotEmpty()) {
+            try {
+                MediaScannerConnection.scanFile(
+                    context,
+                    pathsToRescan.toTypedArray(),
+                    null,
+                    null
+                )
+            } catch (_: Exception) {}
+        }
+
+        if (deletedIds.isNotEmpty()) {
+            fileDao.deleteByIds(deletedIds)
+            AppLogger.i("StorageRepository", "deleteFiles: successfully removed ${deletedIds.size}/${files.size} files.")
+        }
+
+        deletedIds.isNotEmpty()
     }
 
     override suspend fun getFilesByHash(hash: String): List<FileItem> {

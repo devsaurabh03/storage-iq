@@ -1,6 +1,7 @@
 package com.storage.intelligence.data.repository
 
 import android.graphics.BitmapFactory
+import com.storage.intelligence.core.logging.AppLogger
 import com.storage.intelligence.core.database.dao.DuplicateGroupDao
 import com.storage.intelligence.core.database.dao.FileMetadataDao
 import com.storage.intelligence.core.database.entity.DuplicateGroupEntity
@@ -151,7 +152,7 @@ class DuplicateRepositoryImpl @Inject constructor(
                         updated.add(photo.copy(perceptualHash = dHash))
                     }
                 } catch (e: Exception) {
-                    // Ignore corrupted photos
+                    AppLogger.e("DuplicateRepository", "Corrupted or unreadable photo at ${photo.path}: ${e.message}", e)
                 }
             }
             if (updated.size >= 50) {

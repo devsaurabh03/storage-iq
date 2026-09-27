@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.PowerManager
 import androidx.annotation.RequiresApi
 import androidx.work.*
+import com.storage.intelligence.core.logging.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -106,7 +107,7 @@ class VideoOptimizationWorker(
             )
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("VideoOptimizationWorker", "Video optimization failed: ${e.message}", e)
             if (tempOutputFile.exists()) {
                 tempOutputFile.delete()
             }
@@ -250,7 +251,7 @@ class VideoOptimizationWorker(
             return@withContext true
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLogger.e("VideoOptimizationWorker", "Video remux error: ${e.message}", e)
             try { extractor.release() } catch (_: Exception) {}
             return@withContext false
         }
@@ -265,6 +266,7 @@ class VideoOptimizationWorker(
             extractor.release()
             hasTracks
         } catch (e: Exception) {
+            AppLogger.e("VideoOptimizationWorker", "Validate output file failed for ${file.name}: ${e.message}", e)
             false
         }
     }

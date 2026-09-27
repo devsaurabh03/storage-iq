@@ -53,7 +53,10 @@ class DashboardViewModel @Inject constructor(
         )
     }
         .map<DashboardUiState, Result<DashboardUiState>> { Result.Success(it) }
-        .catch { emit(Result.Error(it)) }
+        .catch { error ->
+            com.storage.intelligence.core.logging.AppLogger.e("DashboardViewModel", "Dashboard stream failure: ${error.message}", error)
+            emit(Result.Error(error))
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Result.Loading)
 
     init {
@@ -63,13 +66,19 @@ class DashboardViewModel @Inject constructor(
 
     fun rescanStorage() {
         viewModelScope.launch {
-            _isScanning.value = true
-            storageRepository.scanStorage().collect { progress ->
-                _scanProgressText.value = progress.currentPhase
-                if (progress.isComplete) {
-                    _isScanning.value = false
-                    _scanProgressText.value = null
+            try {
+                _isScanning.value = true
+                storageRepository.scanStorage().collect { progress ->
+                    _scanProgressText.value = progress.currentPhase
+                    if (progress.isComplete) {
+                        _isScanning.value = false
+                        _scanProgressText.value = null
+                    }
                 }
+            } catch (e: Exception) {
+                com.storage.intelligence.core.logging.AppLogger.e("DashboardViewModel", "rescanStorage error: ${e.message}", e)
+                _isScanning.value = false
+                _scanProgressText.value = null
             }
         }
     }

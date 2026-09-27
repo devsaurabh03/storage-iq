@@ -22,6 +22,7 @@ import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.storage.intelligence.BuildConfig
 
 /**
  * Centralized, high-performance file logger.
@@ -162,6 +163,7 @@ object AppLogger {
     }
 
     fun d(tag: String, message: String) {
+        if (!BuildConfig.DEBUG) return // Skip debug logs in production builds
         try { Log.d(tag, message) } catch (_: Throwable) { println("[$tag] $message") }
         enqueue("DEBUG", tag, message)
     }

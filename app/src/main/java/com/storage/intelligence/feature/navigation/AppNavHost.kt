@@ -203,7 +203,8 @@ fun AppNavHost(
                     onNavigateToOtherStorage = { navController.navigate(Routes.OTHER_STORAGE) },
                     onNavigateToMessaging = { navController.navigate(Routes.MESSAGING) },
                     onNavigateToPaywall = { navController.navigate(Routes.PAYWALL) },
-                    onNavigateToPerformance = { navController.navigate(Routes.PERFORMANCE) }
+                    onNavigateToPerformance = { navController.navigate(Routes.PERFORMANCE) },
+                    onNavigateToSettings = { navController.navigate(Routes.SETTINGS) }
                 )
             }
 
@@ -519,6 +520,16 @@ fun AppNavHost(
                 com.storage.intelligence.feature.optimization.OptimizedArchiveScreen(
                     viewModel = hiltViewModel(),
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(Routes.ME) {
+                com.storage.intelligence.feature.me.MeScreen(
+                    viewModel = hiltViewModel(),
+                    onNavigateToActivity = { navController.navigate(Routes.VIDEO_ACTIVITY) },
+                    onNavigateToPerformanceLab = { navController.navigate(Routes.PERFORMANCE_LAB) },
+                    onNavigateToPaywall = { navController.navigate(Routes.PAYWALL) },
+                    onNavigateToSettings = { navController.navigate(Routes.SETTINGS) }
                 )
             }
         }

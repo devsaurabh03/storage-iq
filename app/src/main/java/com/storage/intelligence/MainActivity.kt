@@ -27,14 +27,25 @@ class MainActivity : ComponentActivity() {
 
     private val onboardingViewModel: OnboardingViewModel by viewModels()
 
+    private val _hasPermission = androidx.compose.runtime.mutableStateOf(false)
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        // Handle result
+    ) { _ ->
+        _hasPermission.value = permissionManager.isStoragePermissionGranted()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !permissionManager.hasAllFilesAccess()) {
+            permissionManager.requestAllFilesAccess(this)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        _hasPermission.value = permissionManager.isStoragePermissionGranted()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        _hasPermission.value = permissionManager.isStoragePermissionGranted()
 
         setContent {
             StorageIQTheme {
@@ -43,7 +54,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val hasCompletedOnboarding by onboardingViewModel.hasCompletedOnboarding.collectAsState()
-                    val hasPermission = permissionManager.isStoragePermissionGranted()
+                    val hasPermission by _hasPermission
 
                     val startDest = when {
                         !hasCompletedOnboarding -> Routes.ONBOARDING
@@ -55,7 +66,12 @@ class MainActivity : ComponentActivity() {
                         startDestination = startDest,
                         hasPermission = hasPermission,
                         onRequestPermission = {
-                            permissionLauncher.launch(permissionManager.getRequiredPermissions().toTypedArray())
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && !permissionManager.hasAllFilesAccess()) {
+                                permissionLauncher.launch(permissionManager.getRequiredPermissions().toTypedArray())
+                                permissionManager.requestAllFilesAccess(this@MainActivity)
+                            } else {
+                                permissionLauncher.launch(permissionManager.getRequiredPermissions().toTypedArray())
+                            }
                         }
                     )
                 }
