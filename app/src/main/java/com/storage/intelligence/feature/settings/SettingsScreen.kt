@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.sp
@@ -180,7 +182,8 @@ fun SettingsScreen(
             // App Diagnostic Logs Card
             var showLogsDialog by remember { mutableStateOf(false) }
             if (showLogsDialog) {
-                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                val context = LocalContext.current
+                val clipboardManager = LocalClipboardManager.current
                 var currentLogs by remember {
                     mutableStateOf(com.storage.intelligence.core.logging.AppLogger.getLatestLogs(250))
                 }
@@ -192,7 +195,7 @@ fun SettingsScreen(
                             Text("Mobile App Diagnostic Logs", fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Saved in: ${com.storage.intelligence.core.logging.AppLogger.getLogsDirectoryPath()}",
+                                text = "Path: ${com.storage.intelligence.core.logging.AppLogger.getLogsDirectoryPath()}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -203,23 +206,66 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = 380.dp)
-                                .verticalScroll(rememberScrollState())
                         ) {
-                            Text(
-                                text = currentLogs,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val path = com.storage.intelligence.core.logging.AppLogger.exportLogsToPublicStorage(context)
+                                        Toast.makeText(context, "Exported to: $path", Toast.LENGTH_LONG).show()
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Save to Downloads", fontSize = 11.sp)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        com.storage.intelligence.core.logging.AppLogger.shareLogs(context)
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Share", fontSize = 11.sp)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f, fill = false)
+                                    .heightIn(max = 280.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp)
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    Text(
+                                        text = currentLogs,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
                         }
                     },
                     confirmButton = {
                         TextButton(
                             onClick = {
                                 clipboardManager.setText(AnnotatedString(currentLogs))
+                                Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
                             }
                         ) {
-                            Text("Copy Logs")
+                            Text("Copy")
                         }
                     },
                     dismissButton = {
@@ -228,6 +274,7 @@ fun SettingsScreen(
                                 onClick = {
                                     com.storage.intelligence.core.logging.AppLogger.clearLogs()
                                     currentLogs = "Logs cleared."
+                                    Toast.makeText(context, "Logs cleared", Toast.LENGTH_SHORT).show()
                                 }
                             ) {
                                 Text("Clear", color = MaterialTheme.colorScheme.error)
