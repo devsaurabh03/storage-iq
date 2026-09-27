@@ -33,12 +33,14 @@ class PhotoOptimizationEngine @Inject constructor(
         val mime = file.mimeType.lowercase()
         val isPng = mime.contains("png") || file.name.endsWith(".png", ignoreCase = true)
         val isBmp = mime.contains("bmp") || file.name.endsWith(".bmp", ignoreCase = true)
-        val isLargeJpeg = (mime.contains("jpeg") || mime.contains("jpg")) && size > 2_500_000L
+        val isLargeJpeg = (mime.contains("jpeg") || mime.contains("jpg")) && size > 2_000_000L
+        val isMediumJpeg = (mime.contains("jpeg") || mime.contains("jpg")) && size > 800_000L
+        val isWebp = mime.contains("webp") || file.name.endsWith(".webp", ignoreCase = true)
+        val isHeic = mime.contains("heic") || mime.contains("heif") || file.name.endsWith(".heic", ignoreCase = true) || file.name.endsWith(".heif", ignoreCase = true)
 
         val (savingsPercent, recommendedFormat, reason, isWorth) = when {
-            isPng && size > 500_000L -> {
-                val estRatio = 0.35f // 65% reduction converting PNG to WebP
-                Quad(65, TargetPhotoFormat.WEBP, "Uncompressed image: WebP conversion saves ~65%", true)
+            isPng && size > 400_000L -> {
+                Quad(65, TargetPhotoFormat.WEBP, "Uncompressed PNG: Converting to WebP saves ~65%", true)
             }
             isBmp -> {
                 Quad(80, TargetPhotoFormat.WEBP, "Raw bitmap: Modern compression saves ~80%", true)
@@ -46,16 +48,39 @@ class PhotoOptimizationEngine @Inject constructor(
             isLargeJpeg -> {
                 Quad(45, TargetPhotoFormat.WEBP, "Large camera photo: Smart WebP saves ~45% with visually identical quality", true)
             }
-            size > 5_000_000L -> {
-                Quad(40, TargetPhotoFormat.WEBP, "Large media file: High compression potential (~40%)", true)
+            isMediumJpeg -> {
+                Quad(35, TargetPhotoFormat.WEBP, "JPEG photo: WebP compression saves ~35%", true)
+            }
+            isWebp && size > 1_500_000L -> {
+                Quad(45, TargetPhotoFormat.WEBP, "Large WebP (lossless/uncompressed): High-efficiency re-encoding saves ~45%", true)
+            }
+            isWebp && size > 500_000L -> {
+                Quad(35, TargetPhotoFormat.WEBP, "Unoptimized WebP: Compact lossy compression saves ~35%", true)
+            }
+            isHeic && size > 2_000_000L -> {
+                Quad(35, TargetPhotoFormat.WEBP, "Large HEIC image: High-efficiency WebP saves ~35%", true)
+            }
+            size > 4_000_000L -> {
+                Quad(40, TargetPhotoFormat.WEBP, "Large image file: High compression potential (~40%)", true)
             }
             else -> {
-                Quad(10, TargetPhotoFormat.WEBP, "Already compact or compression savings negligible (<15%)", false)
+                val formatName = when {
+                    isWebp -> "WebP"
+                    isPng -> "PNG"
+                    isHeic -> "HEIC"
+                    else -> "JPEG"
+                }
+                Quad(10, TargetPhotoFormat.WEBP, "Already compact $formatName or compression savings negligible (<15%)", false)
             }
         }
 
         val estimatedSavingsBytes = if (isWorth) (size * (savingsPercent / 100f)).toLong() else 0L
         val estimatedOptimizedSize = (size - estimatedSavingsBytes).coerceAtLeast(1024L)
+
+        com.storage.intelligence.core.logging.AppLogger.d(
+            "PhotoOptimizer",
+            "Evaluated candidate '${file.name}' (${file.mimeType}, ${size / 1024} KB): isWorth=$isWorth, estSavings=${estimatedSavingsBytes / 1024} KB ($savingsPercent%)"
+        )
 
         return PhotoOptimizationCandidate(
             fileItem = file,
@@ -306,6 +331,11 @@ class PhotoOptimizationEngine @Inject constructor(
 
             val savedBytes = (originalLength - optimizedLength).coerceAtLeast(0L)
 
+            com.storage.intelligence.core.logging.AppLogger.i(
+                "PhotoOptimizer",
+                "Successfully optimized '${candidate.name}': saved ${savedBytes / 1024} KB (${originalLength / 1024} KB -> ${optimizedLength / 1024} KB, output: $finalDestinationPath)"
+            )
+
             return@withContext PhotoOptimizationResult(
                 fileId = candidate.id,
                 originalPath = candidate.path,
@@ -318,6 +348,11 @@ class PhotoOptimizationEngine @Inject constructor(
 
         } catch (e: Exception) {
             tempFile.delete()
+            com.storage.intelligence.core.logging.AppLogger.e(
+                "PhotoOptimizer",
+                "Failed optimizing '${candidate.name}' (${candidate.path})",
+                e
+            )
             return@withContext PhotoOptimizationResult(
                 fileId = candidate.id,
                 originalPath = candidate.path,

@@ -138,6 +138,11 @@ class VideoViewModel @Inject constructor(
             current.copy(activeJobs = current.activeJobs + newJob)
         }
 
+        com.storage.intelligence.core.logging.AppLogger.i(
+            "VideoOptimizer",
+            "Started video optimization for '${video.name}' (${video.sizeBytes / (1024 * 1024)} MB -> Target: ${plan.targetCodecName}, Est savings: ${plan.estimatedSavingsBytes / (1024 * 1024)} MB)"
+        )
+
         runOptimizationLifecycle(jobId, plan, startPercent = 5)
     }
 
@@ -267,6 +272,11 @@ class VideoViewModel @Inject constructor(
                     )
                 }
 
+                com.storage.intelligence.core.logging.AppLogger.i(
+                    "VideoOptimizer",
+                    "Completed video optimization for '${plan.source.name}': Reclaimed $savedStr"
+                )
+
                 // Persist video savings to DataStore preferences
                 preferencesRepository.recordVideoOptimized(plan.estimatedSavingsBytes)
 
@@ -280,8 +290,10 @@ class VideoViewModel @Inject constructor(
 
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Task was paused or cancelled by user, do not mark as failed
+                com.storage.intelligence.core.logging.AppLogger.d("VideoOptimizer", "Job $jobId was paused or cancelled by user.")
                 throw e
             } catch (e: Exception) {
+                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Error optimizing video '${plan.source.name}'", e)
                 updateJob(jobId) {
                     it.copy(
                         state = JobStatus.FAILED,

@@ -54,6 +54,15 @@ class PhotoOptimizationViewModel @Inject constructor(
                     val worthOptimizing = evaluated.filter { it.isWorthOptimizing }
                     val totalSavings = worthOptimizing.sumOf { it.estimatedSavingsBytes }
 
+                    val webpCount = evaluated.count { it.fileItem.mimeType.contains("webp") || it.fileItem.name.endsWith(".webp", ignoreCase = true) }
+                    val jpegCount = evaluated.count { it.fileItem.mimeType.contains("jpeg") || it.fileItem.name.endsWith(".jpg", ignoreCase = true) }
+                    val pngCount = evaluated.count { it.fileItem.mimeType.contains("png") || it.fileItem.name.endsWith(".png", ignoreCase = true) }
+
+                    com.storage.intelligence.core.logging.AppLogger.i(
+                        "PhotoOptimizer",
+                        "Scanned ${photoList.size} images ($pngCount PNG, $jpegCount JPEG, $webpCount WebP). Found ${worthOptimizing.size} candidates to optimize (est. ${totalSavings / (1024 * 1024)} MB savings)."
+                    )
+
                     _uiState.value = _uiState.value.copy(
                         candidates = evaluated,
                         isEvaluating = false,
@@ -82,6 +91,11 @@ class PhotoOptimizationViewModel @Inject constructor(
     fun optimizeSelected(deleteOriginals: Boolean, onComplete: (Long, Int, String?) -> Unit) {
         val selected = _uiState.value.candidates.filter { it.isSelected }
         if (selected.isEmpty()) return
+
+        com.storage.intelligence.core.logging.AppLogger.i(
+            "PhotoOptimizer",
+            "User started optimization of ${selected.size} selected images (deleteOriginals=$deleteOriginals)"
+        )
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -117,7 +131,13 @@ class PhotoOptimizationViewModel @Inject constructor(
 
             if (deleteOriginals && filesToDelete.isNotEmpty()) {
                 storageRepository.deleteFiles(filesToDelete)
+                com.storage.intelligence.core.logging.AppLogger.i("PhotoOptimizer", "Cleaned up ${filesToDelete.size} original photos after successful optimization.")
             }
+
+            com.storage.intelligence.core.logging.AppLogger.i(
+                "PhotoOptimizer",
+                "Completed batch optimization: $successCount of ${selected.size} succeeded. Reclaimed ${savedTotal / 1024} KB total storage."
+            )
 
             _uiState.value = _uiState.value.copy(isOptimizing = false)
             onComplete(savedTotal, successCount, lastErrorMessage)

@@ -61,4 +61,46 @@ class PhotoOptimizationEngineTest {
         assertFalse(candidate.isWorthOptimizing)
         assertEquals(0L, candidate.estimatedSavingsBytes)
     }
+
+    @Test
+    fun `evaluateCandidate marks large uncompressed WebP as worth optimizing`() {
+        val webpFile = FileItem(
+            id = 103L,
+            path = "/storage/emulated/0/DCIM/uncompressed_art.webp",
+            name = "uncompressed_art.webp",
+            sizeBytes = 2_500_000L, // 2.5 MB WebP
+            mimeType = "image/webp",
+            modifiedTimeMs = System.currentTimeMillis(),
+            category = StorageCategory.PHOTOS,
+            width = 2048,
+            height = 2048
+        )
+
+        val candidate = engine.evaluateCandidate(webpFile)
+
+        assertTrue(candidate.isWorthOptimizing)
+        assertEquals(TargetPhotoFormat.WEBP, candidate.recommendedFormat)
+        assertTrue(candidate.estimatedSavingsBytes > 800_000L)
+        assertEquals(45, candidate.estimatedSavingsPercent)
+    }
+
+    @Test
+    fun `evaluateCandidate skips already compact WebP images`() {
+        val smallWebpFile = FileItem(
+            id = 104L,
+            path = "/storage/emulated/0/DCIM/sticker.webp",
+            name = "sticker.webp",
+            sizeBytes = 120_000L, // 120 KB WebP
+            mimeType = "image/webp",
+            modifiedTimeMs = System.currentTimeMillis(),
+            category = StorageCategory.PHOTOS,
+            width = 512,
+            height = 512
+        )
+
+        val candidate = engine.evaluateCandidate(smallWebpFile)
+
+        assertFalse(candidate.isWorthOptimizing)
+        assertEquals(0L, candidate.estimatedSavingsBytes)
+    }
 }

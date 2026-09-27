@@ -20,6 +20,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import com.storage.intelligence.BuildConfig
 import com.storage.intelligence.R
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
@@ -164,6 +170,103 @@ fun SettingsScreen(
                         )
                         Text(
                             text = "Hardware codec profiling, AV1/HEVC/H.264 benchmarks, memory leak & latency tests.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // App Diagnostic Logs Card
+            var showLogsDialog by remember { mutableStateOf(false) }
+            if (showLogsDialog) {
+                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                var currentLogs by remember {
+                    mutableStateOf(com.storage.intelligence.core.logging.AppLogger.getLatestLogs(250))
+                }
+
+                AlertDialog(
+                    onDismissRequest = { showLogsDialog = false },
+                    title = {
+                        Column {
+                            Text("Mobile App Diagnostic Logs", fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Saved in: ${com.storage.intelligence.core.logging.AppLogger.getLogsDirectoryPath()}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 380.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = currentLogs,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(currentLogs))
+                            }
+                        ) {
+                            Text("Copy Logs")
+                        }
+                    },
+                    dismissButton = {
+                        Row {
+                            TextButton(
+                                onClick = {
+                                    com.storage.intelligence.core.logging.AppLogger.clearLogs()
+                                    currentLogs = "Logs cleared."
+                                }
+                            ) {
+                                Text("Clear", color = MaterialTheme.colorScheme.error)
+                            }
+                            TextButton(onClick = { showLogsDialog = false }) {
+                                Text("Close")
+                            }
+                        }
+                    }
+                )
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { showLogsDialog = true },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = EmeraldPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Diagnostic Logs",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Folder: ${com.storage.intelligence.core.logging.AppLogger.getLogsDirectoryPath()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
