@@ -48,7 +48,8 @@ data class VideoUiState(
 @HiltViewModel
 class VideoViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val preferencesRepository: UserPreferencesRepository
+    private val preferencesRepository: UserPreferencesRepository,
+    private val fileDao: com.storage.intelligence.core.database.dao.FileMetadataDao
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(VideoUiState())
@@ -330,7 +331,7 @@ class VideoViewModel @Inject constructor(
         }
     }
 
-    private fun scanMediaStoreVideos(): List<VideoCharacteristics> {
+    private suspend fun scanMediaStoreVideos(): List<VideoCharacteristics> = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val resultList = mutableListOf<VideoCharacteristics>()
         try {
             val projection = arrayOf(
@@ -412,59 +413,44 @@ class VideoViewModel @Inject constructor(
                     resultList.add(item)
                 }
             }
-        } catch (_: Exception) {
-            // Ignore scan errors
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e("VideoViewModel", "MediaStore video scan error: ${e.message}", e)
         }
 
-        // Only fallback to sample demonstration items if absolutely no videos exist on the physical device
-        if (resultList.isEmpty()) {
-            val dummyFile = File(context.cacheDir, "sample_vacation.mp4")
-            resultList.addAll(listOf(
-                VideoCharacteristics(
-                    file = dummyFile,
-                    name = "Vacation.mp4",
-                    sizeBytes = 1_095_216_640L,
-                    durationMs = 762_000L,
-                    width = 3840,
-                    height = 2160,
-                    fps = 60,
-                    bitrateBps = 42_000_000,
-                    codecName = "H.264",
-                    mimeType = "video/avc",
-                    isHdr = true,
-                    audioCodec = "AAC"
-                ),
-                VideoCharacteristics(
-                    file = dummyFile,
-                    name = "Drone_Footage_4K.mp4",
-                    sizeBytes = 2_450_000_000L,
-                    durationMs = 1_200_000L,
-                    width = 3840,
-                    height = 2160,
-                    fps = 60,
-                    bitrateBps = 50_000_000,
-                    codecName = "H.264",
-                    mimeType = "video/avc",
-                    isHdr = false,
-                    audioCodec = "AAC"
-                ),
-                VideoCharacteristics(
-                    file = dummyFile,
-                    name = "Family_Event_1080p.mp4",
-                    sizeBytes = 650_000_000L,
-                    durationMs = 900_000L,
-                    width = 1920,
-                    height = 1080,
-                    fps = 30,
-                    bitrateBps = 12_000_000,
-                    codecName = "H.264",
-                    mimeType = "video/avc",
-                    isHdr = false,
-                    audioCodec = "AAC"
-                )
-            ))
+        // Merge any real device videos discovered from scanner database
+        try {
+            val dbVideos = fileDao.getFilesByCategory(com.storage.intelligence.domain.model.StorageCategory.VIDEOS.name)
+            val existingPaths = resultList.map { it.file.absolutePath }.toSet()
+            for (dbVideo in dbVideos) {
+                if (!existingPaths.contains(dbVideo.path)) {
+                    val file = File(dbVideo.path)
+                    if (file.exists() && file.length() > 0) {
+                        val chars = try {
+                            VideoMetadataExtractor.extractCharacteristics(file)
+                        } catch (_: Exception) {
+                            VideoCharacteristics(
+                                file = file,
+                                name = dbVideo.name,
+                                sizeBytes = dbVideo.sizeBytes,
+                                durationMs = dbVideo.durationMs ?: 0L,
+                                width = dbVideo.width ?: 1920,
+                                height = dbVideo.height ?: 1080,
+                                fps = 30,
+                                bitrateBps = if ((dbVideo.durationMs ?: 0L) > 0) ((dbVideo.sizeBytes * 8000) / dbVideo.durationMs!!).toInt() else 12_000_000,
+                                codecName = if (dbVideo.mimeType.contains("hevc") || dbVideo.mimeType.contains("h265")) "HEVC" else "H.264",
+                                mimeType = dbVideo.mimeType,
+                                isHdr = false,
+                                audioCodec = "AAC"
+                            )
+                        }
+                        resultList.add(chars)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e("VideoViewModel", "Error merging db videos: ${e.message}", e)
         }
 
-        return resultList
+        resultList
     }
 }

@@ -290,12 +290,17 @@ fun AppNavHost(
 
             composable(Routes.VIDEO_HOME) {
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
+                val legacyVideos = uiState.videos.filter {
+                    it.codecName == "H.264" || it.codecName == "MPEG-4" || it.codecName.contains("AVC", ignoreCase = true)
+                }
 
                 com.storage.intelligence.feature.video.ui.VideoHomeScreen(
                     totalVideoBytes = uiState.totalStorageBytes,
                     potentialSavingsBytes = uiState.potentialSavingsBytes,
                     fourKCount = uiState.videos.count { it.width >= 3840 },
                     fourKBytes = uiState.videos.filter { it.width >= 3840 }.sumOf { it.sizeBytes },
+                    legacyCount = legacyVideos.size,
+                    legacyBytes = legacyVideos.sumOf { it.sizeBytes },
                     onFindSpaceClick = { navController.navigate(Routes.VIDEO_LIBRARY) },
                     onReviewFourKClick = { navController.navigate(Routes.VIDEO_LIBRARY) },
                     onNavigateToSettings = { navController.navigate(Routes.SETTINGS) }
