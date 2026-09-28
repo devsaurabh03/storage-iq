@@ -113,7 +113,14 @@ fun VideoLibraryScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(sortedVideos) { video ->
-                        val estSavings = (video.sizeBytes * 0.55).toLong()
+                        val isModern = video.codecName.equals("AV1", ignoreCase = true) ||
+                                       video.codecName.equals("HEVC", ignoreCase = true) ||
+                                       video.codecName.equals("H.265", ignoreCase = true)
+                        val estSavings = when {
+                            video.width >= 3840 -> (video.sizeBytes * 0.60).toLong()
+                            !isModern -> (video.sizeBytes * 0.45).toLong()
+                            else -> 0L
+                        }
                         VideoItemCard(
                             video = video,
                             estimatedSavingsBytes = estSavings,

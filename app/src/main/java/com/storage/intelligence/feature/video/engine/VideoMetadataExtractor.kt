@@ -28,7 +28,11 @@ data class VideoCharacteristics(
 
 object VideoMetadataExtractor {
 
-    fun extractCharacteristics(file: File): VideoCharacteristics {
+    fun extractCharacteristics(
+        file: File,
+        context: android.content.Context? = null,
+        uri: android.net.Uri? = null
+    ): VideoCharacteristics {
         val extractor = MediaExtractor()
         var width = 1920
         var height = 1080
@@ -42,7 +46,13 @@ object VideoMetadataExtractor {
         val keyframeList = mutableListOf<KeyframeIndex>()
 
         try {
-            extractor.setDataSource(file.absolutePath)
+            if (file.exists() && file.canRead()) {
+                extractor.setDataSource(file.absolutePath)
+            } else if (context != null && uri != null) {
+                extractor.setDataSource(context, uri, null)
+            } else {
+                extractor.setDataSource(file.absolutePath)
+            }
             val trackCount = extractor.trackCount
             for (i in 0 until trackCount) {
                 val format = extractor.getTrackFormat(i)

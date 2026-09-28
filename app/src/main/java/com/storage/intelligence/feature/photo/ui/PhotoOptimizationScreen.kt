@@ -102,6 +102,8 @@ fun PhotoOptimizationScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            var activeFilter by remember { mutableStateOf(0) } // 0: Needs Optimization, 1: Already Optimal, 2: All
+
             if (uiState.isEvaluating) {
                 Column(
                     modifier = Modifier.align(Alignment.Center),
@@ -110,12 +112,46 @@ fun PhotoOptimizationScreen(
                     CircularProgressIndicator(color = EmeraldPrimary)
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Analyzing photo compression potential...",
+                        text = "Scanning device photos and analyzing compression potential...",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            } else if (uiState.candidates.isEmpty()) {
+            } else if (uiState.totalScannedCount == 0 || uiState.candidates.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Image,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No Photos Found on Device",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "No image files were detected on device storage. Ensure media/storage permissions are granted.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { viewModel.loadPhotoCandidates() },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                    ) {
+                        Text("Re-scan Photos")
+                    }
+                }
+            } else if (uiState.unoptimizedCount == 0 && activeFilter == 0) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -130,18 +166,35 @@ fun PhotoOptimizationScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Your photos are already optimal",
+                        text = "All ${uiState.totalScannedCount} Photos Already Optimal",
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "No large uncompressed photos or raw image files were found.",
+                        text = "Every photo scanned on this device is already compressed (WebP/HEIC) or compact (<250 KB). None require conversion.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(
+                        onClick = { activeFilter = 2 },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("View Scanned Photos (${uiState.totalScannedCount})")
+                    }
                 }
             } else {
+                val displayedCandidates = remember(uiState.candidates, activeFilter) {
+                    when (activeFilter) {
+                        0 -> uiState.candidates.filter { it.isWorthOptimizing }
+                        1 -> uiState.candidates.filter { !it.isWorthOptimizing }
+                        else -> uiState.candidates
+                    }
+                }
+
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
@@ -164,29 +217,64 @@ fun PhotoOptimizationScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Smart Photo Optimization",
+                                        text = "Photo Optimization Overview",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Converts uncompressed PNGs and high-bitrate camera photos to modern WebP. Preserves visual resolution and EXIF details while reclaiming storage.",
+                                    text = "Scanned ${uiState.totalScannedCount} device photos. Converts uncompressed PNGs and high-bitrate photos to modern WebP while preserving full visual resolution and EXIF metadata.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "Potential Recovery: ${FormattingUtils.formatBytes(uiState.totalEstimatedSavingsBytes)}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = EmeraldPrimary
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column {
+                                        Text("Unoptimized", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${uiState.unoptimizedCount} photos", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                    }
+                                    Column {
+                                        Text("Already Optimal", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${uiState.alreadyOptimalCount} photos", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                    }
+                                    Column {
+                                        Text("Potential Savings", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(FormattingUtils.formatBytes(uiState.totalEstimatedSavingsBytes), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = EmeraldPrimary)
+                                    }
+                                }
                             }
                         }
                     }
 
-                    items(uiState.candidates) { candidate ->
+                    // Filter Chips Row
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = activeFilter == 0,
+                                onClick = { activeFilter = 0 },
+                                label = { Text("To Optimize (${uiState.unoptimizedCount})") }
+                            )
+                            FilterChip(
+                                selected = activeFilter == 1,
+                                onClick = { activeFilter = 1 },
+                                label = { Text("Optimal (${uiState.alreadyOptimalCount})") }
+                            )
+                            FilterChip(
+                                selected = activeFilter == 2,
+                                onClick = { activeFilter = 2 },
+                                label = { Text("All (${uiState.totalScannedCount})") }
+                            )
+                        }
+                    }
+
+                    items(displayedCandidates) { candidate ->
                         PhotoCandidateRow(
                             candidate = candidate,
                             onToggleSelection = { isSelected ->
@@ -415,11 +503,27 @@ private fun PhotoCandidateRow(
                 )
             }
 
-            Checkbox(
-                checked = candidate.isSelected,
-                onCheckedChange = onToggleSelection,
-                colors = CheckboxDefaults.colors(checkedColor = EmeraldPrimary)
-            )
+            if (candidate.isWorthOptimizing) {
+                Checkbox(
+                    checked = candidate.isSelected,
+                    onCheckedChange = onToggleSelection,
+                    colors = CheckboxDefaults.colors(checkedColor = EmeraldPrimary)
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "Optimal",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     }
 }

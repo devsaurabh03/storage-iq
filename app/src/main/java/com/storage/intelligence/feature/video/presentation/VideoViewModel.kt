@@ -35,6 +35,8 @@ data class VideoUiState(
     val videos: List<VideoCharacteristics> = emptyList(),
     val totalStorageBytes: Long = 0L,
     val potentialSavingsBytes: Long = 0L,
+    val optimizableVideos: List<VideoCharacteristics> = emptyList(),
+    val alreadyOptimalVideos: List<VideoCharacteristics> = emptyList(),
     val selectedVideo: VideoCharacteristics? = null,
     val selectedVideoPlan: OptimizationPlan? = null,
     val isCompressionSheetVisible: Boolean = false,
@@ -65,17 +67,70 @@ class VideoViewModel @Inject constructor(
     fun loadData() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoading = true) }
+            com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "Starting device video scan (MediaStore & Database)...")
             val profile = CodecCapabilityManager.detectCapabilities()
             val videoList = scanMediaStoreVideos()
 
+            if (videoList.isEmpty()) {
+                com.storage.intelligence.core.logging.AppLogger.w(
+                    "VideoOptimizer",
+                    "0 videos found on device storage. Check READ_MEDIA_VIDEO or MANAGE_EXTERNAL_STORAGE permissions."
+                )
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        videos = emptyList(),
+                        totalStorageBytes = 0L,
+                        potentialSavingsBytes = 0L,
+                        optimizableVideos = emptyList(),
+                        alreadyOptimalVideos = emptyList(),
+                        deviceProfile = profile
+                    )
+                }
+                return@launch
+            }
+
+            val optimizable = mutableListOf<VideoCharacteristics>()
+            val alreadyOptimal = mutableListOf<VideoCharacteristics>()
             var totalBytes = 0L
             var totalSavings = 0L
 
             videoList.forEach { video ->
                 val plan = VideoOptimizationEngine.generatePlan(video, profile, OptimizationMode.BALANCED)
                 totalBytes += video.sizeBytes
-                totalSavings += plan.estimatedSavingsBytes
+
+                val isModernCodec = video.codecName.equals("AV1", ignoreCase = true) ||
+                                    video.codecName.equals("HEVC", ignoreCase = true) ||
+                                    video.codecName.equals("H.265", ignoreCase = true)
+                val is4K = video.width >= 3840 || video.height >= 2160
+                val isLegacy = video.codecName.contains("264", ignoreCase = true) ||
+                               video.codecName.contains("AVC", ignoreCase = true) ||
+                               video.codecName.contains("MPEG", ignoreCase = true) ||
+                               video.codecName.contains("3GP", ignoreCase = true) ||
+                               !isModernCodec
+
+                if (is4K || isLegacy || plan.estimatedSavingsBytes > 10 * 1024 * 1024L) {
+                    optimizable.add(video)
+                    totalSavings += plan.estimatedSavingsBytes
+                    com.storage.intelligence.core.logging.AppLogger.i(
+                        "VideoOptimizer",
+                        "-> [NEEDS OPTIMIZATION] '${video.name}' (${com.storage.intelligence.core.common.FormattingUtils.formatBytes(video.sizeBytes)}, ${video.codecName}, ${video.width}x${video.height}) - Plan: Target ${plan.targetCodecName}, Est. savings: ${com.storage.intelligence.core.common.FormattingUtils.formatBytes(plan.estimatedSavingsBytes)}"
+                    )
+                } else {
+                    alreadyOptimal.add(video)
+                    com.storage.intelligence.core.logging.AppLogger.i(
+                        "VideoOptimizer",
+                        "-> [ALREADY OPTIMAL] '${video.name}' (${com.storage.intelligence.core.common.FormattingUtils.formatBytes(video.sizeBytes)}, ${video.codecName}, ${video.width}x${video.height}) - Modern high-efficiency format"
+                    )
+                }
             }
+
+            com.storage.intelligence.core.logging.AppLogger.i(
+                "VideoOptimizer",
+                "Video scan complete: ${videoList.size} total videos (${com.storage.intelligence.core.common.FormattingUtils.formatBytes(totalBytes)}). " +
+                "${optimizable.size} need optimization (potential savings: ${com.storage.intelligence.core.common.FormattingUtils.formatBytes(totalSavings)}), " +
+                "${alreadyOptimal.size} already optimal/modern."
+            )
 
             _uiState.update {
                 it.copy(
@@ -83,6 +138,8 @@ class VideoViewModel @Inject constructor(
                     videos = videoList,
                     totalStorageBytes = totalBytes,
                     potentialSavingsBytes = totalSavings,
+                    optimizableVideos = optimizable,
+                    alreadyOptimalVideos = alreadyOptimal,
                     deviceProfile = profile
                 )
             }
@@ -355,6 +412,7 @@ class VideoViewModel @Inject constructor(
             )
 
             cursor?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media._ID)
                 val pathCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DATA)
                 val nameCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DISPLAY_NAME)
                 val sizeCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.SIZE)
@@ -363,7 +421,10 @@ class VideoViewModel @Inject constructor(
                 val heightCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.HEIGHT)
                 val mimeCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.MIME_TYPE)
 
+                com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "MediaStore returned ${c.count} video records.")
+
                 while (c.moveToNext()) {
+                    val id = c.getLong(idCol)
                     val path = c.getString(pathCol) ?: continue
                     val file = File(path)
                     val size = c.getLong(sizeCol)
@@ -375,25 +436,13 @@ class VideoViewModel @Inject constructor(
                     val height = c.getInt(heightCol).let { if (it > 0) it else 1080 }
                     val mime = c.getString(mimeCol) ?: "video/mp4"
 
+                    val contentUri = android.content.ContentUris.withAppendedId(
+                        android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+
                     val item = try {
-                        if (file.exists() && file.canRead()) {
-                            VideoMetadataExtractor.extractCharacteristics(file)
-                        } else {
-                            VideoCharacteristics(
-                                file = file,
-                                name = name,
-                                sizeBytes = size,
-                                durationMs = duration,
-                                width = width,
-                                height = height,
-                                fps = 30,
-                                bitrateBps = if (duration > 0) ((size * 8000) / duration).toInt() else 12_000_000,
-                                codecName = if (mime.contains("hevc") || mime.contains("h265")) "HEVC" else "H.264",
-                                mimeType = mime,
-                                isHdr = false,
-                                audioCodec = "AAC"
-                            )
-                        }
+                        VideoMetadataExtractor.extractCharacteristics(file, context, contentUri)
                     } catch (_: Exception) {
                         VideoCharacteristics(
                             file = file,

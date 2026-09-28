@@ -51,16 +51,16 @@ class PhotoOptimizationEngine @Inject constructor(
             isMediumJpeg -> {
                 Quad(35, TargetPhotoFormat.WEBP, "JPEG photo: WebP compression saves ~35%", true)
             }
-            isWebp && size > 1_500_000L -> {
+            isWebp && size > 1_000_000L -> {
                 Quad(45, TargetPhotoFormat.WEBP, "Large WebP (lossless/uncompressed): High-efficiency re-encoding saves ~45%", true)
             }
-            isWebp && size > 500_000L -> {
-                Quad(35, TargetPhotoFormat.WEBP, "Unoptimized WebP: Compact lossy compression saves ~35%", true)
+            isWebp && size > 250_000L -> {
+                Quad(30, TargetPhotoFormat.WEBP, "WebP photo: Compact lossy compression saves ~30%", true)
             }
-            isHeic && size > 2_000_000L -> {
+            isHeic && size > 1_500_000L -> {
                 Quad(35, TargetPhotoFormat.WEBP, "Large HEIC image: High-efficiency WebP saves ~35%", true)
             }
-            size > 4_000_000L -> {
+            size > 3_000_000L -> {
                 Quad(40, TargetPhotoFormat.WEBP, "Large image file: High compression potential (~40%)", true)
             }
             else -> {
@@ -70,16 +70,16 @@ class PhotoOptimizationEngine @Inject constructor(
                     isHeic -> "HEIC"
                     else -> "JPEG"
                 }
-                Quad(10, TargetPhotoFormat.WEBP, "Already compact $formatName or compression savings negligible (<15%)", false)
+                Quad(0, TargetPhotoFormat.WEBP, "Already compact $formatName or small file (<250 KB)", false)
             }
         }
 
         val estimatedSavingsBytes = if (isWorth) (size * (savingsPercent / 100f)).toLong() else 0L
         val estimatedOptimizedSize = (size - estimatedSavingsBytes).coerceAtLeast(1024L)
 
-        com.storage.intelligence.core.logging.AppLogger.d(
+        com.storage.intelligence.core.logging.AppLogger.i(
             "PhotoOptimizer",
-            "Evaluated candidate '${file.name}' (${file.mimeType}, ${size / 1024} KB): isWorth=$isWorth, estSavings=${estimatedSavingsBytes / 1024} KB ($savingsPercent%)"
+            "Evaluated '${file.name}' (${file.mimeType}, ${com.storage.intelligence.core.common.FormattingUtils.formatBytes(size)}) -> [${if (isWorth) "NEEDS OPTIMIZATION" else "ALREADY OPTIMAL"}] - $reason (Est. savings: ${com.storage.intelligence.core.common.FormattingUtils.formatBytes(estimatedSavingsBytes)})"
         )
 
         return PhotoOptimizationCandidate(

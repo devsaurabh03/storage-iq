@@ -144,6 +144,24 @@ fun VideoItemCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val isModern = video.codecName.equals("AV1", ignoreCase = true) ||
+                                       video.codecName.equals("HEVC", ignoreCase = true) ||
+                                       video.codecName.equals("H.265", ignoreCase = true)
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (isModern) EmeraldPrimary.copy(alpha = 0.15f) else WarningAmber.copy(alpha = 0.15f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isModern) "${video.codecName} (Modern)" else "${video.codecName} (Legacy)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isModern) EmeraldPrimary else WarningAmber,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
                         if (video.width >= 3840) {
                             Box(
                                 modifier = Modifier
@@ -171,6 +189,20 @@ fun VideoItemCard(
                                     "Save ~${FormattingUtils.formatBytes(estimatedSavingsBytes)}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = EmeraldPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else if (isModern) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "Optimal",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
