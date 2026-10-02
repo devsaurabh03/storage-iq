@@ -173,6 +173,24 @@ fun FilePreviewDialog(
 @Composable
 private fun VideoPreviewPlayer(fileItem: FileItem) {
     val context = LocalContext.current
+
+    // Resolve the correct URI — handles both file paths and content:// URIs
+    val videoUri = remember(fileItem) {
+        val path = fileItem.path
+        when {
+            path.startsWith("content://") -> Uri.parse(path)
+            path.startsWith("file://")    -> Uri.parse(path)
+            else -> {
+                val file = File(path)
+                if (file.exists()) Uri.fromFile(file)
+                else Uri.parse(path) // last resort — let ExoPlayer try
+            }
+        }
+    }
+
+    var isBuffering by remember { mutableStateOf(true) }
+    var playbackError by remember { mutableStateOf(false) }
+
     val exoPlayer = remember(fileItem) {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(2000, 5000, 300, 800)
@@ -181,7 +199,21 @@ private fun VideoPreviewPlayer(fileItem: FileItem) {
         ExoPlayer.Builder(context)
             .setLoadControl(loadControl)
             .build().apply {
-                setMediaItem(MediaItem.fromUri(Uri.fromFile(File(fileItem.path))))
+                setMediaItem(MediaItem.fromUri(videoUri))
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        isBuffering = state == Player.STATE_BUFFERING
+                        if (state == Player.STATE_READY) playbackError = false
+                    }
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        isBuffering = false
+                        playbackError = true
+                        com.storage.intelligence.core.logging.AppLogger.e(
+                            "VideoPreview",
+                            "ExoPlayer error for ${fileItem.name}: ${error.message}"
+                        )
+                    }
+                })
                 prepare()
                 playWhenReady = true
             }
@@ -194,19 +226,61 @@ private fun VideoPreviewPlayer(fileItem: FileItem) {
         }
     }
 
-    AndroidView(
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                player = exoPlayer
-                useController = true
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    useController = true
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Buffering overlay
+        if (isBuffering) {
+            CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier.size(48.dp)
+            )
+        }
+
+        // Error overlay
+        if (playbackError) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ErrorOutline,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(48.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Preview unavailable",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Use \"Open with\" to play in your video player app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f)
                 )
             }
-        },
-        modifier = Modifier.fillMaxSize()
-    )
+        }
+    }
 }
 
 @Composable
