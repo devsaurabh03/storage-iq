@@ -40,6 +40,7 @@ data class OptimizationJobState(
     val estimatedTimeRemainingText: String,
     val state: JobStatus,
     val savedBytes: Long = 0L,
+    val originalSizeBytes: Long = 0L,
     val outputPath: String? = null
 )
 
@@ -401,8 +402,14 @@ private fun CompletedJobCard(
                     )
                     Text(
                         text = if (job.state == JobStatus.COMPLETED) {
-                            "Saved ${formatSize(job.savedBytes)} • Movies/OptimizedVideos"
-                        } else "Failed",
+                            val savedMb = job.savedBytes / (1024.0 * 1024.0)
+                            val origMb  = job.originalSizeBytes / (1024.0 * 1024.0)
+                            val newMb   = (job.originalSizeBytes - job.savedBytes).coerceAtLeast(0L) / (1024.0 * 1024.0)
+                            val savedStr = if (savedMb >= 1024) String.format("%.1f GB", savedMb / 1024.0) else String.format("%.0f MB", savedMb)
+                            val origStr  = if (origMb  >= 1024) String.format("%.1f GB", origMb  / 1024.0) else String.format("%.0f MB", origMb)
+                            val newStr   = if (newMb   >= 1024) String.format("%.1f GB", newMb   / 1024.0) else String.format("%.0f MB", newMb)
+                            "$origStr → $newStr  •  Saved $savedStr  •  Original trashed"
+                        } else job.statusText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

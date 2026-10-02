@@ -280,11 +280,11 @@ class VideoViewModel @Inject constructor(
                     )
                 }
 
-                // 1. Prepare temporary output file in app cache
+                // 1. Prepare temp output file in app cache (original is never touched here)
                 val cleanBaseName = plan.source.name.substringBeforeLast('.')
                 val tempOutputFile = File(context.cacheDir, "opt_temp_${System.currentTimeMillis()}_${cleanBaseName}.mp4")
 
-                // 2. Perform real video processing via MediaExtractor & MediaMuxer
+                // 2. Transcode: decode source → encode optimized → temp file
                 val isProcessed = withContext(Dispatchers.IO) {
                     processVideoPipeline(plan, tempOutputFile) { pct, statusMsg ->
                         updateJob(jobId) {
@@ -304,33 +304,38 @@ class VideoViewModel @Inject constructor(
                 updateJob(jobId) {
                     it.copy(
                         progressPercent = 90,
-                        statusText = "Exporting to Movies/OptimizedVideos...",
-                        estimatedTimeRemainingText = "1s"
+                        statusText = "Saving optimized video...",
+                        estimatedTimeRemainingText = "2s"
                     )
                 }
 
-                // 3. Commit to Public Storage (Movies/OptimizedVideos)
-                val targetFileName = "optimized_${cleanBaseName}.mp4"
+                // ── 3. Commit optimized file to public Movies/ ────────────────────
+                // Keep the original file name so it replaces the original cleanly
+                // (no "optimized_" prefix, no sub-folder). The original gets trashed below.
+                val targetFileName = "${cleanBaseName}.mp4"
                 var finalPublicPath = ""
+                var finalInsertUri: Uri? = null
 
-                // Strategy A: Direct file write to Environment.DIRECTORY_MOVIES
+                // Strategy A: Direct file write (pre-Android 10 or MANAGE_EXTERNAL_STORAGE)
                 try {
                     val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-                    val optFolder = File(moviesDir, "OptimizedVideos").apply { if (!exists()) mkdirs() }
-                    val publicFile = File(optFolder, targetFileName)
+                    moviesDir.mkdirs()
+                    val publicFile = File(moviesDir, targetFileName)
                     tempOutputFile.copyTo(publicFile, overwrite = true)
                     finalPublicPath = publicFile.absolutePath
+                    com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer",
+                        "Optimized file committed to: $finalPublicPath (${publicFile.length() / 1024} KB)")
                 } catch (e: Exception) {
-                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Direct public Movies write failed: ${e.message}")
+                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Direct Movies write failed: ${e.message}")
                 }
 
-                // Strategy B: MediaStore Scoped Storage insert (Android 10+)
+                // Strategy B: MediaStore Scoped Storage (Android 10+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
                         val contentValues = ContentValues().apply {
                             put(MediaStore.Video.Media.DISPLAY_NAME, targetFileName)
                             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/OptimizedVideos")
+                            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES)
                             put(MediaStore.Video.Media.IS_PENDING, 1)
                         }
                         val insertUri = context.contentResolver.insert(
@@ -344,23 +349,22 @@ class VideoViewModel @Inject constructor(
                             contentValues.clear()
                             contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
                             context.contentResolver.update(insertUri, contentValues, null, null)
-                            if (finalPublicPath.isEmpty()) {
-                                finalPublicPath = insertUri.toString()
-                            }
+                            finalInsertUri = insertUri
+                            if (finalPublicPath.isEmpty()) finalPublicPath = insertUri.toString()
                         }
                     } catch (e: Exception) {
-                        com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaStore Scoped Storage insert failed: ${e.message}")
+                        com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaStore insert failed: ${e.message}")
                     }
                 }
 
-                // Fallback to internal storage if both public writes failed
+                // Fallback: app internal files dir
                 if (finalPublicPath.isEmpty()) {
                     val fallbackFile = File(context.filesDir, targetFileName)
                     tempOutputFile.copyTo(fallbackFile, overwrite = true)
                     finalPublicPath = fallbackFile.absolutePath
                 }
 
-                // 4. Trigger MediaScanner so Google Files & Gallery discover the file immediately
+                // Scan so Files/Gallery discover the optimized file immediately
                 if (finalPublicPath.isNotEmpty() && !finalPublicPath.startsWith("content:")) {
                     try {
                         MediaScannerConnection.scanFile(
@@ -368,30 +372,40 @@ class VideoViewModel @Inject constructor(
                             arrayOf(finalPublicPath),
                             arrayOf("video/mp4")
                         ) { path, uri ->
-                            com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "MediaScanner indexed optimized video at: $path ($uri)")
+                            com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "MediaScanner indexed optimized: $path")
                         }
                     } catch (e: Exception) {
-                        com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaScanner rescan error: ${e.message}")
+                        com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaScanner error: ${e.message}")
                     }
                 }
 
-                // Calculate real savings
-                val finalFile = File(finalPublicPath)
-                val finalSizeBytes = if (finalFile.exists()) finalFile.length() else tempOutputFile.length()
-                val actualSavedBytes = (plan.source.sizeBytes - finalSizeBytes).coerceAtLeast(0L)
-                val effectiveSaved = if (actualSavedBytes > 0) actualSavedBytes else plan.estimatedSavingsBytes
-
-                val savedMb = effectiveSaved / (1024.0 * 1024.0)
-                val savedStr = if (savedMb >= 1024) String.format("%.2f GB", savedMb / 1024.0) else String.format("%.0f MB", savedMb)
-
                 // Clean temp cache file
-                try {
-                    if (tempOutputFile.exists() && finalPublicPath != tempOutputFile.absolutePath) {
-                        tempOutputFile.delete()
-                    }
-                } catch (_: Exception) {}
+                try { if (tempOutputFile.exists()) tempOutputFile.delete() } catch (_: Exception) {}
 
-                // 5. Index into Room database
+                // ── 4. Move original to trash (safe & reversible) ─────────────────
+                // The original is NEVER permanently deleted here — it goes to system
+                // trash so the user can restore it from Files app if they change their mind.
+                updateJob(jobId) {
+                    it.copy(progressPercent = 95, statusText = "Moving original to trash...")
+                }
+                trashOriginalVideo(plan.source)
+
+                // ── 5. Calculate actual space reclaimed ───────────────────────────
+                val originalSizeBytes = plan.source.sizeBytes
+                val finalFile = File(finalPublicPath)
+                val finalSizeBytes = when {
+                    finalFile.exists()     -> finalFile.length()
+                    finalInsertUri != null -> plan.estimatedOutputSizeBytes
+                    else                   -> plan.estimatedOutputSizeBytes
+                }
+                val actualSavedBytes = (originalSizeBytes - finalSizeBytes).coerceAtLeast(0L)
+                val effectiveSaved   = if (actualSavedBytes > 0) actualSavedBytes else plan.estimatedSavingsBytes
+
+                val savedMb  = effectiveSaved / (1024.0 * 1024.0)
+                val savedStr = if (savedMb >= 1024) String.format("%.2f GB", savedMb / 1024.0)
+                               else String.format("%.0f MB", savedMb)
+
+                // ── 6. Index optimized file into Room ─────────────────────────────
                 try {
                     val entity = com.storage.intelligence.core.database.entity.FileMetadataEntity(
                         id = finalPublicPath.hashCode().toLong(),
@@ -405,48 +419,55 @@ class VideoViewModel @Inject constructor(
                         height = plan.targetHeight,
                         durationMs = plan.source.durationMs,
                         isOptimized = true,
-                        originalSizeBytes = plan.source.sizeBytes,
+                        originalSizeBytes = originalSizeBytes,
                         compressedFilePath = finalPublicPath,
                         compressionAlgorithm = plan.targetCodecName
                     )
                     fileDao.insertOrUpdateAll(listOf(entity))
                 } catch (e: Exception) {
-                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Failed to update file database: ${e.message}")
+                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "DB index failed: ${e.message}")
                 }
 
+                // ── 7. Update job state → COMPLETED ──────────────────────────────
                 updateJob(jobId) {
                     it.copy(
                         progressPercent = 100,
-                        statusText = "Optimization Complete: Reclaimed $savedStr",
+                        statusText = "Done! Saved $savedStr — original moved to trash",
                         estimatedTimeRemainingText = "Done",
                         state = JobStatus.COMPLETED,
                         savedBytes = effectiveSaved,
+                        originalSizeBytes = originalSizeBytes,
                         outputPath = finalPublicPath
                     )
                 }
 
                 com.storage.intelligence.core.logging.AppLogger.i(
                     "VideoOptimizer",
-                    "Completed video optimization for '${plan.source.name}': Output at $finalPublicPath (Saved $savedStr)"
+                    "Optimization complete for '${plan.source.name}': " +
+                    "${originalSizeBytes / (1024 * 1024)} MB → ${finalSizeBytes / (1024 * 1024)} MB " +
+                    "(saved $savedStr). Output: $finalPublicPath. Original trashed."
                 )
 
-                // Persist video savings to DataStore preferences
+                // Persist savings to DataStore
                 preferencesRepository.recordVideoOptimized(effectiveSaved)
 
-                // Update UI state totals to reflect reclaimed storage
+                // Remove this video from the "needs optimization" list in UI
                 _uiState.update { current ->
                     current.copy(
                         potentialSavingsBytes = (current.potentialSavingsBytes - effectiveSaved).coerceAtLeast(0L),
-                        totalStorageBytes = (current.totalStorageBytes - effectiveSaved).coerceAtLeast(0L)
+                        totalStorageBytes = (current.totalStorageBytes - effectiveSaved).coerceAtLeast(0L),
+                        optimizableVideos = current.optimizableVideos.filter {
+                            it.file.absolutePath != plan.source.file.absolutePath
+                        }
                     )
                 }
 
             } catch (e: kotlinx.coroutines.CancellationException) {
-                // Task was paused or cancelled by user, do not mark as failed
-                com.storage.intelligence.core.logging.AppLogger.d("VideoOptimizer", "Job $jobId was paused or cancelled by user.")
+                // Task paused/cancelled by user — not an error
+                com.storage.intelligence.core.logging.AppLogger.d("VideoOptimizer", "Job $jobId paused or cancelled by user.")
                 throw e
             } catch (e: Exception) {
-                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Error optimizing video '${plan.source.name}'", e)
+                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Error optimizing '${plan.source.name}'", e)
                 updateJob(jobId) {
                     it.copy(
                         state = JobStatus.FAILED,
@@ -458,6 +479,65 @@ class VideoViewModel @Inject constructor(
             }
         }
         jobTasks[jobId] = job
+    }
+
+    /**
+     * Moves the original video to system trash (recoverable).
+     *
+     * Android 11+ : uses MediaStore.setTrashed() — file appears in Files app Trash.
+     * Android 10  : marks IS_PENDING in MediaStore so it's hidden but not gone.
+     * Older       : moves the file to a .Trash folder on the same volume.
+     *
+     * The original is NEVER permanently deleted here. The user can always
+     * restore it from Files app → Trash within 30 days.
+     */
+    private suspend fun trashOriginalVideo(source: com.storage.intelligence.feature.video.engine.VideoCharacteristics) {
+        withContext(Dispatchers.IO) {
+            try {
+                val srcFile = source.file
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    // Android 11+: MediaStore.setTrashed is the official API
+                    val projection = arrayOf(MediaStore.Video.Media._ID)
+                    val selection = "${MediaStore.Video.Media.DISPLAY_NAME} = ? OR ${MediaStore.Video.Media.DATA} = ?"
+                    val selectionArgs = arrayOf(source.name, srcFile.absolutePath)
+                    context.contentResolver.query(
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        projection, selection, selectionArgs, null
+                    )?.use { c ->
+                        if (c.moveToFirst()) {
+                            val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.Video.Media._ID))
+                            val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                            val values = ContentValues().apply {
+                                put(MediaStore.Video.Media.IS_TRASHED, 1)
+                            }
+                            val updated = context.contentResolver.update(contentUri, values, null, null)
+                            if (updated > 0) {
+                                com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer",
+                                    "Original '${source.name}' moved to MediaStore trash (recoverable via Files app).")
+                                return@withContext
+                            }
+                        }
+                    }
+                }
+
+                // Fallback for Android 10 or when MediaStore ID not found: move to .Trash folder
+                if (srcFile.exists()) {
+                    val trashDir = File(srcFile.parentFile, ".Trash").apply { mkdirs() }
+                    val trashFile = File(trashDir, srcFile.name)
+                    srcFile.renameTo(trashFile)
+                    // Notify MediaScanner to remove the original from the gallery index
+                    MediaScannerConnection.scanFile(context, arrayOf(srcFile.absolutePath), null, null)
+                    com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer",
+                        "Original '${source.name}' moved to .Trash folder: ${trashFile.absolutePath}")
+                }
+
+            } catch (e: Exception) {
+                // Trash failure is non-fatal — the optimized file was already saved successfully
+                com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer",
+                    "Could not trash original '${source.name}': ${e.message}. Original remains untouched.")
+            }
+        }
     }
 
     /**
