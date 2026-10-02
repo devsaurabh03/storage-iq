@@ -65,10 +65,27 @@ object StaleFileCompressor {
 
         return try {
             if (algorithm == CompressionAlgorithm.WEBP_INTEL) {
-                val bitmap = BitmapFactory.decodeFile(srcFile.absolutePath)
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(srcFile.absolutePath, options)
+                val maxDim = maxOf(options.outWidth, options.outHeight)
+                var sampleSize = 1
+                while ((maxDim / sampleSize) > 2560) {
+                    sampleSize *= 2
+                }
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                val bitmap = BitmapFactory.decodeFile(srcFile.absolutePath, decodeOptions)
                 if (bitmap != null) {
+                    val format = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        Bitmap.CompressFormat.WEBP_LOSSY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        Bitmap.CompressFormat.WEBP
+                    }
                     FileOutputStream(targetFile).use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.WEBP, 70, out)
+                        bitmap.compress(format, 75, out)
                     }
                     bitmap.recycle()
                 } else {
@@ -101,7 +118,12 @@ object StaleFileCompressor {
                     errorMessage = "Compression produced invalid target file"
                 )
             }
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
+            com.storage.intelligence.core.logging.AppLogger.e(
+                "StaleFileCompressor",
+                "Compression failed for ${fileItem.path}: ${t.message}",
+                t
+            )
             OptimizationResult(
                 success = false,
                 originalSizeBytes = originalSize,
@@ -109,7 +131,7 @@ object StaleFileCompressor {
                 savedBytes = 0L,
                 compressedPath = fileItem.path,
                 algorithm = algorithm,
-                errorMessage = e.localizedMessage
+                errorMessage = t.localizedMessage ?: "Compression failed"
             )
         }
     }

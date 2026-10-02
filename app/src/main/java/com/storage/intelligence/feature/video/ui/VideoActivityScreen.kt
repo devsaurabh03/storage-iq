@@ -19,6 +19,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import android.content.Intent
+import android.net.Uri
+import java.io.File
+import com.storage.intelligence.core.ui.theme.EmeraldPrimary
+import com.storage.intelligence.core.ui.preview.FilePreviewDialog
+import com.storage.intelligence.core.ui.preview.PreviewType
+import com.storage.intelligence.domain.model.FileItem
+import com.storage.intelligence.domain.model.StorageCategory
 
 data class OptimizationJobState(
     val id: String,
@@ -29,7 +39,8 @@ data class OptimizationJobState(
     val statusText: String,
     val estimatedTimeRemainingText: String,
     val state: JobStatus,
-    val savedBytes: Long = 0L
+    val savedBytes: Long = 0L,
+    val outputPath: String? = null
 )
 
 enum class JobStatus {
@@ -46,8 +57,50 @@ fun VideoActivityScreen(
     onRetryJob: (String) -> Unit,
     onNavigateBack: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val activeJobs = jobs.filter { it.state == JobStatus.RUNNING || it.state == JobStatus.PAUSED }
     val completedJobs = jobs.filter { it.state == JobStatus.COMPLETED || it.state == JobStatus.FAILED }
+
+    var previewJob by remember { mutableStateOf<OptimizationJobState?>(null) }
+
+    val previewFile = remember(previewJob) {
+        previewJob?.outputPath?.let { path ->
+            val file = File(path)
+            FileItem(
+                id = path.hashCode().toLong(),
+                path = path,
+                name = file.name,
+                sizeBytes = if (file.exists()) file.length() else 0L,
+                mimeType = "video/mp4",
+                modifiedTimeMs = if (file.exists()) file.lastModified() else System.currentTimeMillis(),
+                category = StorageCategory.VIDEOS
+            )
+        }
+    }
+
+    if (previewFile != null) {
+        FilePreviewDialog(
+            fileItem = previewFile,
+            previewType = PreviewType.VIDEO,
+            onDismiss = { previewJob = null },
+            onOpenExternal = {
+                val file = File(previewFile.path)
+                val uri = try {
+                    FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                } catch (_: Exception) {
+                    Uri.fromFile(file)
+                }
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "video/mp4")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(Intent.createChooser(intent, "Play with"))
+                } catch (_: Exception) {}
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -181,7 +234,11 @@ fun VideoActivityScreen(
                 }
 
                 items(completedJobs, key = { it.id }) { job ->
-                    CompletedJobCard(job = job, onRetry = { onRetryJob(job.id) })
+                    CompletedJobCard(
+                        job = job,
+                        onRetry = { onRetryJob(job.id) },
+                        onPreview = { previewJob = job }
+                    )
                 }
             }
         }
@@ -308,7 +365,8 @@ private fun ActiveJobCard(
 @Composable
 private fun CompletedJobCard(
     job: OptimizationJobState,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onPreview: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -342,16 +400,32 @@ private fun CompletedJobCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (job.state == JobStatus.COMPLETED) "Saved ${formatSize(job.savedBytes)}" else "Failed",
+                        text = if (job.state == JobStatus.COMPLETED) {
+                            "Saved ${formatSize(job.savedBytes)} • Movies/OptimizedVideos"
+                        } else "Failed",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            if (job.state == JobStatus.FAILED) {
-                IconButton(onClick = onRetry) {
-                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Retry")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (job.state == JobStatus.COMPLETED && !job.outputPath.isNullOrEmpty()) {
+                    Button(
+                        onClick = onPreview,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Preview", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                if (job.state == JobStatus.FAILED) {
+                    IconButton(onClick = onRetry) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Retry")
+                    }
                 }
             }
         }

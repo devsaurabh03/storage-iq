@@ -314,7 +314,9 @@ fun RamAnalysisScreen(
                                                         data = Uri.parse("package:${app.packageName}")
                                                     }
                                                     context.startActivity(intent)
-                                                } catch (_: Exception) {}
+                                                } catch (e: Exception) {
+                                                    com.storage.intelligence.core.logging.AppLogger.e("RamAnalysisScreen", "Failed to open settings for ${app.packageName}: ${e.message}", e)
+                                                }
                                             },
                                             shape = RoundedCornerShape(10.dp),
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)

@@ -272,15 +272,6 @@ fun AppNavHost(
                 )
             }
 
-            composable(Routes.ME) {
-                com.storage.intelligence.feature.me.MeScreen(
-                    viewModel = hiltViewModel(),
-                    onNavigateToActivity = { navController.navigate(Routes.VIDEO_ACTIVITY) },
-                    onNavigateToPerformanceLab = { navController.navigate(Routes.PERFORMANCE_LAB) },
-                    onNavigateToPaywall = { navController.navigate(Routes.PAYWALL) }
-                )
-            }
-
             composable(Routes.TIMELINE) {
                 TimelineScreen(
                     viewModel = hiltViewModel(),

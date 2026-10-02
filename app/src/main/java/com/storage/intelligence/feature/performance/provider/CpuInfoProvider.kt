@@ -163,9 +163,7 @@ class CpuInfoProvider @Inject constructor() {
 
     private fun calculateCpuLoad(): Int {
         return try {
-            val reader = RandomAccessFile("/proc/stat", "r")
-            val line = reader.readLine()
-            reader.close()
+            val line = RandomAccessFile("/proc/stat", "r").use { it.readLine() }
 
             if (line != null && line.startsWith("cpu ")) {
                 val tokens = line.split("\\s+".toRegex())
@@ -195,7 +193,11 @@ class CpuInfoProvider @Inject constructor() {
             } else {
                 20
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.d(
+                "CpuInfoProvider",
+                "Direct /proc/stat read unavailable (standard SELinux isolation on Android 8+): ${e.message}"
+            )
             // Fallback lightweight estimation
             (15..45).random()
         }
@@ -204,7 +206,8 @@ class CpuInfoProvider @Inject constructor() {
     private fun readProcCpuInfo(): String {
         return try {
             File("/proc/cpuinfo").readText()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.d("CpuInfoProvider", "Could not read /proc/cpuinfo: ${e.message}")
             ""
         }
     }
@@ -213,7 +216,8 @@ class CpuInfoProvider @Inject constructor() {
         return try {
             val process = Runtime.getRuntime().exec("getprop $key")
             process.inputStream.bufferedReader().use { it.readLine() ?: "" }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.d("CpuInfoProvider", "Could not getprop $key: ${e.message}")
             ""
         }
     }
@@ -221,7 +225,7 @@ class CpuInfoProvider @Inject constructor() {
     private fun readLongFromFile(file: File): Long {
         return try {
             if (file.exists()) file.readText().trim().toLongOrNull() ?: 0L else 0L
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             0L
         }
     }

@@ -18,8 +18,10 @@ class PeriodicSnapshotWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         return try {
             timelineRepository.recordCurrentSnapshot()
+            com.storage.intelligence.core.logging.AppLogger.d("PeriodicSnapshotWorker", "Successfully recorded periodic storage snapshot.")
             Result.success()
         } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e("PeriodicSnapshotWorker", "Failed to record periodic snapshot: ${e.message}", e)
             Result.failure()
         }
     }

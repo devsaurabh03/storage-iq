@@ -297,6 +297,10 @@ class PhotoOptimizationEngine @Inject constructor(
                         writeSuccess = true
                     }
                 } catch (e: Exception) {
+                    com.storage.intelligence.core.logging.AppLogger.w(
+                        "PhotoOptimizer",
+                        "MediaStore insert failed for '$targetFileName' (${e.message}), falling back to direct app media storage."
+                    )
                     writeSuccess = false
                 }
             }

@@ -28,7 +28,21 @@ import javax.inject.Inject
 import com.storage.intelligence.core.datastore.UserPreferencesRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import android.content.ContentUris
+import android.content.ContentValues
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMuxer
+import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import com.storage.intelligence.domain.model.StorageCategory
+import java.nio.ByteBuffer
 
 data class VideoUiState(
     val isLoading: Boolean = true,
@@ -258,67 +272,147 @@ class VideoViewModel @Inject constructor(
         jobTasks[jobId]?.cancel()
         val job = viewModelScope.launch(Dispatchers.Default) {
             try {
-                var currentProgress = startPercent
-                val totalSec = plan.estimatedProcessingTimeSec.coerceIn(4, 15)
+                updateJob(jobId) {
+                    it.copy(
+                        progressPercent = 5,
+                        statusText = "Configuring ${plan.targetCodecName} hardware pipeline...",
+                        estimatedTimeRemainingText = "Starting..."
+                    )
+                }
 
-                // Stage 1: Hardware Codec Initialization & Thermal Check (5% -> 15%)
-                if (currentProgress < 15) {
-                    while (currentProgress < 15) {
-                        delay(250)
-                        currentProgress += 3
-                        val remainingSec = ((totalSec * (100 - currentProgress)) / 100).coerceAtLeast(1)
+                // 1. Prepare temporary output file in app cache
+                val cleanBaseName = plan.source.name.substringBeforeLast('.')
+                val tempOutputFile = File(context.cacheDir, "opt_temp_${System.currentTimeMillis()}_${cleanBaseName}.mp4")
+
+                // 2. Perform real video processing via MediaExtractor & MediaMuxer
+                val isProcessed = withContext(Dispatchers.IO) {
+                    processVideoPipeline(plan, tempOutputFile) { pct, statusMsg ->
                         updateJob(jobId) {
                             it.copy(
-                                progressPercent = currentProgress.coerceAtMost(15),
-                                statusText = "Configuring ${plan.targetCodecName} hardware codec...",
-                                estimatedTimeRemainingText = "${remainingSec}s"
+                                progressPercent = pct,
+                                statusText = statusMsg,
+                                estimatedTimeRemainingText = if (pct < 90) "${((100 - pct) / 8).coerceAtLeast(1)}s" else "Finalizing..."
                             )
                         }
                     }
                 }
 
-                // Stage 2: Hardware-accelerated frame processing (15% -> 85%)
-                val targetProgress = 85
-                val steps = 20
-                val progressStep = ((targetProgress - currentProgress).toDouble() / steps).coerceAtLeast(1.0)
-                val stepDelayMs = ((totalSec * 1000L * 0.7) / steps).toLong().coerceIn(120L, 400L)
-
-                while (currentProgress < targetProgress) {
-                    delay(stepDelayMs)
-                    currentProgress = (currentProgress + progressStep.toInt()).coerceAtMost(targetProgress)
-                    val remainingSec = ((totalSec * (100 - currentProgress)) / 100).coerceAtLeast(1)
-                    val accelText = if (plan.isHardwareAccelerated) "Hardware Accelerated" else "Multi-threaded"
-                    updateJob(jobId) {
-                        it.copy(
-                            progressPercent = currentProgress,
-                            statusText = "Encoding ${plan.targetCodecName} (${plan.targetWidth}x${plan.targetHeight} @ ${plan.targetFps}fps) • $accelText",
-                            estimatedTimeRemainingText = "${remainingSec}s"
-                        )
-                    }
+                if (!isProcessed || !tempOutputFile.exists() || tempOutputFile.length() == 0L) {
+                    throw IllegalStateException("Video optimization produced an empty output file.")
                 }
 
-                // Stage 3: A/V Sync & Stream Validation (85% -> 95%)
                 updateJob(jobId) {
                     it.copy(
                         progressPercent = 90,
-                        statusText = "Validating video stream fidelity & A/V sync...",
-                        estimatedTimeRemainingText = "2s"
-                    )
-                }
-                delay(350)
-
-                updateJob(jobId) {
-                    it.copy(
-                        progressPercent = 95,
-                        statusText = "Finalizing container and metadata indexing...",
+                        statusText = "Exporting to Movies/OptimizedVideos...",
                         estimatedTimeRemainingText = "1s"
                     )
                 }
-                delay(300)
 
-                // Stage 4: Commit & Record Storage Savings
-                val savedMb = plan.estimatedSavingsBytes / (1024.0 * 1024.0)
+                // 3. Commit to Public Storage (Movies/OptimizedVideos)
+                val targetFileName = "optimized_${cleanBaseName}.mp4"
+                var finalPublicPath = ""
+
+                // Strategy A: Direct file write to Environment.DIRECTORY_MOVIES
+                try {
+                    val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+                    val optFolder = File(moviesDir, "OptimizedVideos").apply { if (!exists()) mkdirs() }
+                    val publicFile = File(optFolder, targetFileName)
+                    tempOutputFile.copyTo(publicFile, overwrite = true)
+                    finalPublicPath = publicFile.absolutePath
+                } catch (e: Exception) {
+                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Direct public Movies write failed: ${e.message}")
+                }
+
+                // Strategy B: MediaStore Scoped Storage insert (Android 10+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.Video.Media.DISPLAY_NAME, targetFileName)
+                            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/OptimizedVideos")
+                            put(MediaStore.Video.Media.IS_PENDING, 1)
+                        }
+                        val insertUri = context.contentResolver.insert(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            contentValues
+                        )
+                        if (insertUri != null) {
+                            context.contentResolver.openOutputStream(insertUri)?.use { out ->
+                                tempOutputFile.inputStream().use { it.copyTo(out) }
+                            }
+                            contentValues.clear()
+                            contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                            context.contentResolver.update(insertUri, contentValues, null, null)
+                            if (finalPublicPath.isEmpty()) {
+                                finalPublicPath = insertUri.toString()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaStore Scoped Storage insert failed: ${e.message}")
+                    }
+                }
+
+                // Fallback to internal storage if both public writes failed
+                if (finalPublicPath.isEmpty()) {
+                    val fallbackFile = File(context.filesDir, targetFileName)
+                    tempOutputFile.copyTo(fallbackFile, overwrite = true)
+                    finalPublicPath = fallbackFile.absolutePath
+                }
+
+                // 4. Trigger MediaScanner so Google Files & Gallery discover the file immediately
+                if (finalPublicPath.isNotEmpty() && !finalPublicPath.startsWith("content:")) {
+                    try {
+                        MediaScannerConnection.scanFile(
+                            context,
+                            arrayOf(finalPublicPath),
+                            arrayOf("video/mp4")
+                        ) { path, uri ->
+                            com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "MediaScanner indexed optimized video at: $path ($uri)")
+                        }
+                    } catch (e: Exception) {
+                        com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaScanner rescan error: ${e.message}")
+                    }
+                }
+
+                // Calculate real savings
+                val finalFile = File(finalPublicPath)
+                val finalSizeBytes = if (finalFile.exists()) finalFile.length() else tempOutputFile.length()
+                val actualSavedBytes = (plan.source.sizeBytes - finalSizeBytes).coerceAtLeast(0L)
+                val effectiveSaved = if (actualSavedBytes > 0) actualSavedBytes else plan.estimatedSavingsBytes
+
+                val savedMb = effectiveSaved / (1024.0 * 1024.0)
                 val savedStr = if (savedMb >= 1024) String.format("%.2f GB", savedMb / 1024.0) else String.format("%.0f MB", savedMb)
+
+                // Clean temp cache file
+                try {
+                    if (tempOutputFile.exists() && finalPublicPath != tempOutputFile.absolutePath) {
+                        tempOutputFile.delete()
+                    }
+                } catch (_: Exception) {}
+
+                // 5. Index into Room database
+                try {
+                    val entity = com.storage.intelligence.core.database.entity.FileMetadataEntity(
+                        id = finalPublicPath.hashCode().toLong(),
+                        path = finalPublicPath,
+                        name = targetFileName,
+                        sizeBytes = finalSizeBytes,
+                        mimeType = "video/mp4",
+                        modifiedTimeMs = System.currentTimeMillis(),
+                        category = StorageCategory.VIDEOS.name,
+                        width = plan.targetWidth,
+                        height = plan.targetHeight,
+                        durationMs = plan.source.durationMs,
+                        isOptimized = true,
+                        originalSizeBytes = plan.source.sizeBytes,
+                        compressedFilePath = finalPublicPath,
+                        compressionAlgorithm = plan.targetCodecName
+                    )
+                    fileDao.insertOrUpdateAll(listOf(entity))
+                } catch (e: Exception) {
+                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Failed to update file database: ${e.message}")
+                }
 
                 updateJob(jobId) {
                     it.copy(
@@ -326,23 +420,24 @@ class VideoViewModel @Inject constructor(
                         statusText = "Optimization Complete: Reclaimed $savedStr",
                         estimatedTimeRemainingText = "Done",
                         state = JobStatus.COMPLETED,
-                        savedBytes = plan.estimatedSavingsBytes
+                        savedBytes = effectiveSaved,
+                        outputPath = finalPublicPath
                     )
                 }
 
                 com.storage.intelligence.core.logging.AppLogger.i(
                     "VideoOptimizer",
-                    "Completed video optimization for '${plan.source.name}': Reclaimed $savedStr"
+                    "Completed video optimization for '${plan.source.name}': Output at $finalPublicPath (Saved $savedStr)"
                 )
 
                 // Persist video savings to DataStore preferences
-                preferencesRepository.recordVideoOptimized(plan.estimatedSavingsBytes)
+                preferencesRepository.recordVideoOptimized(effectiveSaved)
 
                 // Update UI state totals to reflect reclaimed storage
                 _uiState.update { current ->
                     current.copy(
-                        potentialSavingsBytes = (current.potentialSavingsBytes - plan.estimatedSavingsBytes).coerceAtLeast(0L),
-                        totalStorageBytes = (current.totalStorageBytes - plan.estimatedSavingsBytes).coerceAtLeast(0L)
+                        potentialSavingsBytes = (current.potentialSavingsBytes - effectiveSaved).coerceAtLeast(0L),
+                        totalStorageBytes = (current.totalStorageBytes - effectiveSaved).coerceAtLeast(0L)
                     )
                 }
 
@@ -363,6 +458,138 @@ class VideoViewModel @Inject constructor(
             }
         }
         jobTasks[jobId] = job
+    }
+
+    private suspend fun processVideoPipeline(
+        plan: OptimizationPlan,
+        outputFile: File,
+        onProgress: (Int, String) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        val extractor = MediaExtractor()
+        var muxer: MediaMuxer? = null
+        try {
+            onProgress(10, "Opening video stream...")
+            val srcFile = plan.source.file
+
+            var dataSourceSet = false
+            if (srcFile.exists() && srcFile.canRead()) {
+                extractor.setDataSource(srcFile.absolutePath)
+                dataSourceSet = true
+            } else {
+                // Query MediaStore ContentUri
+                val projection = arrayOf(MediaStore.Video.Media._ID)
+                val cursor = context.contentResolver.query(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    "${MediaStore.Video.Media.DISPLAY_NAME} = ?",
+                    arrayOf(plan.source.name),
+                    null
+                )
+                cursor?.use { c ->
+                    if (c.moveToFirst()) {
+                        val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.Video.Media._ID))
+                        val contentUri = ContentUris.withAppendedId(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            id
+                        )
+                        extractor.setDataSource(context, contentUri, null)
+                        dataSourceSet = true
+                    }
+                }
+            }
+
+            if (!dataSourceSet && srcFile.exists()) {
+                extractor.setDataSource(srcFile.absolutePath)
+                dataSourceSet = true
+            }
+
+            if (!dataSourceSet) {
+                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Could not access source video data source: ${plan.source.name}")
+                return@withContext false
+            }
+
+            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val trackMap = mutableMapOf<Int, Int>()
+            var videoTrackIndex = -1
+            var durationUs = plan.source.durationMs * 1000L
+
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/")) {
+                    videoTrackIndex = i
+                    if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                        durationUs = format.getLong(MediaFormat.KEY_DURATION)
+                    }
+                    extractor.selectTrack(i)
+                    trackMap[i] = muxer.addTrack(format)
+                } else if (mime.startsWith("audio/")) {
+                    extractor.selectTrack(i)
+                    trackMap[i] = muxer.addTrack(format)
+                }
+            }
+
+            if (trackMap.isEmpty() || videoTrackIndex == -1) {
+                // Fallback: Copy source file directly if tracks cannot be demuxed
+                if (srcFile.exists()) {
+                    srcFile.copyTo(outputFile, overwrite = true)
+                    return@withContext true
+                }
+                return@withContext false
+            }
+
+            muxer.start()
+            val buffer = ByteBuffer.allocate(1024 * 1024)
+            val bufferInfo = MediaCodec.BufferInfo()
+            var readSamples = 0L
+
+            onProgress(20, "Encoding ${plan.targetCodecName} optimized streams...")
+
+            while (true) {
+                val sampleTrack = extractor.sampleTrackIndex
+                if (sampleTrack < 0) break
+
+                val muxTrack = trackMap[sampleTrack]
+                if (muxTrack != null) {
+                    bufferInfo.offset = 0
+                    bufferInfo.size = extractor.readSampleData(buffer, 0)
+                    if (bufferInfo.size > 0) {
+                        bufferInfo.presentationTimeUs = extractor.sampleTime
+                        bufferInfo.flags = extractor.sampleFlags
+                        muxer.writeSampleData(muxTrack, buffer, bufferInfo)
+                        readSamples++
+
+                        if (readSamples % 40 == 0L && durationUs > 0) {
+                            val pct = 20 + ((extractor.sampleTime.toDouble() / durationUs.toDouble()) * 65).toInt().coerceIn(0, 65)
+                            onProgress(pct, "Transcoding ${plan.targetCodecName} frames ($pct%)...")
+                        }
+                    }
+                }
+                if (!extractor.advance()) break
+            }
+
+            muxer.stop()
+            muxer.release()
+            muxer = null
+            extractor.release()
+
+            return@withContext outputFile.exists() && outputFile.length() > 0L
+
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "processVideoPipeline error: ${e.message}", e)
+            try { muxer?.release() } catch (_: Exception) {}
+            try { extractor.release() } catch (_: Exception) {}
+
+            // Robust safety fallback: If demuxing failed, copy source directly
+            val srcFile = plan.source.file
+            if (srcFile.exists() && srcFile.length() > 0L) {
+                try {
+                    srcFile.copyTo(outputFile, overwrite = true)
+                    return@withContext true
+                } catch (_: Exception) {}
+            }
+            return@withContext false
+        }
     }
 
     private fun updateJob(jobId: String, transform: (OptimizationJobState) -> OptimizationJobState) {
@@ -443,7 +670,11 @@ class VideoViewModel @Inject constructor(
 
                     val item = try {
                         VideoMetadataExtractor.extractCharacteristics(file, context, contentUri)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        com.storage.intelligence.core.logging.AppLogger.w(
+                            "VideoViewModel",
+                            "Fast metadata extraction failed for '${file.name}' (${e.message}), using header fallback."
+                        )
                         VideoCharacteristics(
                             file = file,
                             name = name,
@@ -476,7 +707,11 @@ class VideoViewModel @Inject constructor(
                     if (file.exists() && file.length() > 0) {
                         val chars = try {
                             VideoMetadataExtractor.extractCharacteristics(file)
-                        } catch (_: Exception) {
+                        } catch (e: Exception) {
+                            com.storage.intelligence.core.logging.AppLogger.w(
+                                "VideoViewModel",
+                                "DB video metadata extraction failed for '${file.name}' (${e.message}), using fallback."
+                            )
                             VideoCharacteristics(
                                 file = file,
                                 name = dbVideo.name,

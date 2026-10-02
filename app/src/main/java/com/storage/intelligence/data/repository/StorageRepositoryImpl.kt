@@ -342,7 +342,9 @@ class StorageRepositoryImpl @Inject constructor(
                     null,
                     null
                 )
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                AppLogger.w("StorageRepository", "MediaScannerConnection rescan error: ${e.message}")
+            }
         }
 
         if (deletedIds.isNotEmpty()) {

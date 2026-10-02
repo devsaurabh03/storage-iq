@@ -27,6 +27,48 @@ class StorageIntelligenceApp : Application(), Configuration.Provider {
             )
             defaultHandler?.uncaughtException(thread, throwable)
         }
+
+        scheduleBackgroundWorkers()
+    }
+
+    private fun scheduleBackgroundWorkers() {
+        try {
+            val workManager = androidx.work.WorkManager.getInstance(this)
+
+            // Periodic snapshot worker: every 12 hours to track storage growth timeline
+            val snapshotConstraints = androidx.work.Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .build()
+
+            val snapshotRequest = androidx.work.PeriodicWorkRequestBuilder<com.storage.intelligence.data.worker.PeriodicSnapshotWorker>(
+                12, java.util.concurrent.TimeUnit.HOURS
+            ).setConstraints(snapshotConstraints).build()
+
+            workManager.enqueueUniquePeriodicWork(
+                "periodic_storage_snapshot",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                snapshotRequest
+            )
+
+            // Storage scan worker: daily background scan
+            val scanConstraints = androidx.work.Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .build()
+
+            val scanRequest = androidx.work.PeriodicWorkRequestBuilder<com.storage.intelligence.data.worker.StorageScanWorker>(
+                24, java.util.concurrent.TimeUnit.HOURS
+            ).setConstraints(scanConstraints).build()
+
+            workManager.enqueueUniquePeriodicWork(
+                "periodic_storage_scan",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                scanRequest
+            )
+
+            com.storage.intelligence.core.logging.AppLogger.d("App", "Background maintenance workers successfully enqueued.")
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e("App", "Failed to enqueue background maintenance workers: ${e.message}", e)
+        }
     }
 
     override val workManagerConfiguration: Configuration

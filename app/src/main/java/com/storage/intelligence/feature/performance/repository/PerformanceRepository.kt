@@ -118,8 +118,12 @@ class PerformanceRepository @Inject constructor(
                 backgroundActiveAppCount = snapshot.activeAppCount
             )
             snapshotDao.insertSnapshot(entity)
-        } catch (_: Exception) {
-            // Non-critical background save failure
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e(
+                "PerformanceRepository",
+                "Non-critical background performance snapshot insert failed: ${e.message}",
+                e
+            )
         }
     }
 
@@ -136,7 +140,11 @@ class PerformanceRepository @Inject constructor(
             val usedBytes = totalBytes - freeBytes
 
             Pair(usedBytes, totalBytes)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.w(
+                "PerformanceRepository",
+                "StatFs failed to query data directory stats (${e.message}), using fallback estimates."
+            )
             Pair(100 * 1024 * 1024 * 1024L, 128 * 1024 * 1024 * 1024L)
         }
     }

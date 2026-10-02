@@ -33,6 +33,31 @@ class AppsViewModel @Inject constructor(
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         }
-        context.startActivity(intent)
+        try {
+            context.startActivity(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            com.storage.intelligence.core.logging.AppLogger.w(
+                "AppsViewModel",
+                "ACTION_INTERNAL_STORAGE_SETTINGS not supported on this OEM ROM, falling back to general settings: ${e.message}"
+            )
+            try {
+                val fallbackIntent = Intent(Settings.ACTION_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallbackIntent)
+            } catch (fallbackEx: Exception) {
+                com.storage.intelligence.core.logging.AppLogger.e(
+                    "AppsViewModel",
+                    "Failed to open system settings fallback: ${fallbackEx.message}",
+                    fallbackEx
+                )
+            }
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e(
+                "AppsViewModel",
+                "Unexpected error opening app storage settings: ${e.message}",
+                e
+            )
+        }
     }
 }

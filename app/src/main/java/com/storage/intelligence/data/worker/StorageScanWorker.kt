@@ -26,9 +26,19 @@ class StorageScanWorker @AssistedInject constructor(
             duplicateRepository.runExactDuplicateDetection()
             duplicateRepository.runSimilarPhotoDetection()
             timelineRepository.recordCurrentSnapshot()
+            com.storage.intelligence.core.logging.AppLogger.i("StorageScanWorker", "Background storage scan & duplicate detection completed successfully.")
             Result.success()
         } catch (e: Exception) {
-            Result.retry()
+            com.storage.intelligence.core.logging.AppLogger.e(
+                "StorageScanWorker",
+                "Background storage scan failed (runAttempt: $runAttemptCount): ${e.message}",
+                e
+            )
+            if (runAttemptCount >= 3) {
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 }
