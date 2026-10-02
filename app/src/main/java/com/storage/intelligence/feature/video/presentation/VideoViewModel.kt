@@ -460,132 +460,292 @@ class VideoViewModel @Inject constructor(
         jobTasks[jobId] = job
     }
 
+    /**
+     * Real transcoding pipeline using MediaCodec decoder → Surface → encoder.
+     *
+     * This produces a genuinely re-encoded video at the plan's target codec,
+     * bitrate, resolution and FPS. Audio is passed through without re-encoding
+     * for speed. Falls back to direct file copy only when codec init fails on
+     * the device (e.g., no hardware AV1 encoder).
+     */
     private suspend fun processVideoPipeline(
         plan: OptimizationPlan,
         outputFile: File,
         onProgress: (Int, String) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
+
+        val srcFile = plan.source.file
         val extractor = MediaExtractor()
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
+        var inputSurface: android.view.Surface? = null
+
         try {
             onProgress(10, "Opening video stream...")
-            val srcFile = plan.source.file
 
+            // ── 1. Open the source ────────────────────────────────────────────
             var dataSourceSet = false
             if (srcFile.exists() && srcFile.canRead()) {
                 extractor.setDataSource(srcFile.absolutePath)
                 dataSourceSet = true
             } else {
-                // Query MediaStore ContentUri
                 val projection = arrayOf(MediaStore.Video.Media._ID)
-                val cursor = context.contentResolver.query(
+                context.contentResolver.query(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                     projection,
                     "${MediaStore.Video.Media.DISPLAY_NAME} = ?",
                     arrayOf(plan.source.name),
                     null
-                )
-                cursor?.use { c ->
+                )?.use { c ->
                     if (c.moveToFirst()) {
                         val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.Video.Media._ID))
-                        val contentUri = ContentUris.withAppendedId(
-                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                            id
-                        )
-                        extractor.setDataSource(context, contentUri, null)
+                        val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                        extractor.setDataSource(context, uri, null)
                         dataSourceSet = true
                     }
                 }
             }
-
             if (!dataSourceSet && srcFile.exists()) {
                 extractor.setDataSource(srcFile.absolutePath)
                 dataSourceSet = true
             }
-
             if (!dataSourceSet) {
-                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Could not access source video data source: ${plan.source.name}")
+                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Cannot open source: ${plan.source.name}")
                 return@withContext false
             }
 
-            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val trackMap = mutableMapOf<Int, Int>()
+            // ── 2. Locate video & audio tracks ───────────────────────────────
             var videoTrackIndex = -1
+            var audioTrackIndex = -1
+            var inputVideoFormat: MediaFormat? = null
+            var inputAudioFormat: MediaFormat? = null
             var durationUs = plan.source.durationMs * 1000L
 
             for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("video/")) {
-                    videoTrackIndex = i
-                    if (format.containsKey(MediaFormat.KEY_DURATION)) {
-                        durationUs = format.getLong(MediaFormat.KEY_DURATION)
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: continue
+                when {
+                    mime.startsWith("video/") && videoTrackIndex == -1 -> {
+                        videoTrackIndex = i
+                        inputVideoFormat = fmt
+                        if (fmt.containsKey(MediaFormat.KEY_DURATION))
+                            durationUs = fmt.getLong(MediaFormat.KEY_DURATION)
                     }
-                    extractor.selectTrack(i)
-                    trackMap[i] = muxer.addTrack(format)
-                } else if (mime.startsWith("audio/")) {
-                    extractor.selectTrack(i)
-                    trackMap[i] = muxer.addTrack(format)
+                    mime.startsWith("audio/") && audioTrackIndex == -1 -> {
+                        audioTrackIndex = i
+                        inputAudioFormat = fmt
+                    }
                 }
             }
 
-            if (trackMap.isEmpty() || videoTrackIndex == -1) {
-                // Fallback: Copy source file directly if tracks cannot be demuxed
-                if (srcFile.exists()) {
-                    srcFile.copyTo(outputFile, overwrite = true)
-                    return@withContext true
-                }
+            if (videoTrackIndex == -1 || inputVideoFormat == null) {
+                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "No video track found in: ${plan.source.name}")
                 return@withContext false
             }
 
-            muxer.start()
-            val buffer = ByteBuffer.allocate(1024 * 1024)
-            val bufferInfo = MediaCodec.BufferInfo()
-            var readSamples = 0L
+            // ── 3. Build encoder output format ───────────────────────────────
+            val encoderMime = plan.targetMimeType
+            val encodeWidth  = plan.targetWidth.let  { if (it % 2 == 0) it else it - 1 }.coerceAtLeast(2)
+            val encodeHeight = plan.targetHeight.let { if (it % 2 == 0) it else it - 1 }.coerceAtLeast(2)
 
-            onProgress(20, "Encoding ${plan.targetCodecName} optimized streams...")
+            val encoderFormat = MediaFormat.createVideoFormat(encoderMime, encodeWidth, encodeHeight).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, plan.targetBitrateBps)
+                setInteger(MediaFormat.KEY_FRAME_RATE, plan.targetFps)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                // Enable hardware B-frame support when available
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    setInteger(MediaFormat.KEY_PROFILE, when (encoderMime) {
+                        MediaFormat.MIMETYPE_VIDEO_HEVC -> android.media.MediaCodecInfo.CodecProfileLevel.HEVCProfileMain
+                        MediaFormat.MIMETYPE_VIDEO_AVC  -> android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+                        else -> 1
+                    })
+                }
+            }
 
-            while (true) {
-                val sampleTrack = extractor.sampleTrackIndex
-                if (sampleTrack < 0) break
+            // ── 4. Initialise encoder first to obtain the input Surface ───────
+            encoder = try {
+                MediaCodec.createEncoderByType(encoderMime)
+            } catch (e: Exception) {
+                com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer",
+                    "No encoder for $encoderMime (${e.message}), falling back to H.264")
+                try { MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC) }
+                catch (e2: Exception) {
+                    com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "No AVC encoder available: ${e2.message}")
+                    return@withContext false
+                }
+            }
 
-                val muxTrack = trackMap[sampleTrack]
-                if (muxTrack != null) {
-                    bufferInfo.offset = 0
-                    bufferInfo.size = extractor.readSampleData(buffer, 0)
-                    if (bufferInfo.size > 0) {
-                        bufferInfo.presentationTimeUs = extractor.sampleTime
-                        bufferInfo.flags = extractor.sampleFlags
-                        muxer.writeSampleData(muxTrack, buffer, bufferInfo)
-                        readSamples++
+            encoder.configure(encoderFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            inputSurface = encoder.createInputSurface()
+            encoder.start()
 
-                        if (readSamples % 40 == 0L && durationUs > 0) {
-                            val pct = 20 + ((extractor.sampleTime.toDouble() / durationUs.toDouble()) * 65).toInt().coerceIn(0, 65)
-                            onProgress(pct, "Transcoding ${plan.targetCodecName} frames ($pct%)...")
+            // ── 5. Initialise decoder pointed at the encoder surface ──────────
+            val decoderMime = inputVideoFormat!!.getString(MediaFormat.KEY_MIME)!!
+            decoder = try {
+                MediaCodec.createDecoderByType(decoderMime)
+            } catch (e: Exception) {
+                com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Cannot create decoder for $decoderMime: ${e.message}")
+                return@withContext false
+            }
+            decoder.configure(inputVideoFormat, inputSurface, null, 0)
+            decoder.start()
+
+            // ── 6. Set up muxer ───────────────────────────────────────────────
+            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            var muxerVideoTrack = -1
+            var muxerAudioTrack = -1
+            var muxerStarted  = false
+
+            // ── 7. Pass-through audio extractor (separate instance) ───────────
+            val audioExtractor = MediaExtractor()
+            var hasAudio = false
+            if (audioTrackIndex >= 0 && inputAudioFormat != null) {
+                try {
+                    if (srcFile.exists() && srcFile.canRead()) {
+                        audioExtractor.setDataSource(srcFile.absolutePath)
+                    } else {
+                        val projection = arrayOf(MediaStore.Video.Media._ID)
+                        context.contentResolver.query(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            projection,
+                            "${MediaStore.Video.Media.DISPLAY_NAME} = ?",
+                            arrayOf(plan.source.name),
+                            null
+                        )?.use { c ->
+                            if (c.moveToFirst()) {
+                                val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.Video.Media._ID))
+                                val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                                audioExtractor.setDataSource(context, uri, null)
+                            }
+                        }
+                    }
+                    audioExtractor.selectTrack(audioTrackIndex)
+                    hasAudio = true
+                } catch (e: Exception) {
+                    com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Audio pass-through setup failed: ${e.message}")
+                }
+            }
+
+            // ── 8. Decode → encode video loop ─────────────────────────────────
+            extractor.selectTrack(videoTrackIndex)
+
+            val decBufferInfo = MediaCodec.BufferInfo()
+            val encBufferInfo = MediaCodec.BufferInfo()
+            val TIMEOUT_US = 10_000L
+            var inputEos = false
+            var outputEos = false
+            var frameCount = 0L
+
+            onProgress(20, "Transcoding ${plan.targetCodecName} (0%)...")
+
+            while (!outputEos) {
+                // Feed decoder
+                if (!inputEos) {
+                    val inIdx = decoder.dequeueInputBuffer(TIMEOUT_US)
+                    if (inIdx >= 0) {
+                        val buf = decoder.getInputBuffer(inIdx)!!
+                        val sampleSize = extractor.readSampleData(buf, 0)
+                        if (sampleSize < 0) {
+                            decoder.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputEos = true
+                        } else {
+                            decoder.queueInputBuffer(inIdx, 0, sampleSize, extractor.sampleTime,
+                                if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+                            extractor.advance()
                         }
                     }
                 }
-                if (!extractor.advance()) break
+
+                // Drain decoder → render to Surface → encoder picks it up automatically
+                val decoderOutIdx = decoder.dequeueOutputBuffer(decBufferInfo, TIMEOUT_US)
+                if (decoderOutIdx >= 0) {
+                    val isEos = decBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    // render=true pushes the frame to the encoder's input surface
+                    decoder.releaseOutputBuffer(decoderOutIdx, /*render=*/true)
+                    if (isEos) encoder.signalEndOfInputStream()
+                }
+
+                // Drain encoder → muxer
+                val encOutIdx = encoder.dequeueOutputBuffer(encBufferInfo, TIMEOUT_US)
+                when {
+                    encOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        if (!muxerStarted) {
+                            muxerVideoTrack = muxer.addTrack(encoder.outputFormat)
+                            if (hasAudio) muxerAudioTrack = muxer.addTrack(inputAudioFormat!!)
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                    }
+                    encOutIdx >= 0 -> {
+                        if (muxerStarted && encBufferInfo.size > 0 &&
+                            encBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
+                            val encBuf = encoder.getOutputBuffer(encOutIdx)!!
+                            muxer.writeSampleData(muxerVideoTrack, encBuf, encBufferInfo)
+                            frameCount++
+
+                            // Progress update every 60 encoded frames
+                            if (frameCount % 60 == 0L && durationUs > 0) {
+                                val pct = (20 + ((encBufferInfo.presentationTimeUs.toDouble() / durationUs.toDouble()) * 65)).toInt().coerceIn(20, 85)
+                                onProgress(pct, "Encoding ${plan.targetCodecName} — frame $frameCount ($pct%)...")
+                            }
+                        }
+                        if (encBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                            outputEos = true
+                        }
+                        encoder.releaseOutputBuffer(encOutIdx, false)
+                    }
+                }
             }
 
-            muxer.stop()
-            muxer.release()
-            muxer = null
-            extractor.release()
+            // ── 9. Mux audio pass-through ─────────────────────────────────────
+            if (hasAudio && muxerStarted && muxerAudioTrack >= 0) {
+                onProgress(88, "Muxing audio track...")
+                val audioBuf = ByteBuffer.allocate(256 * 1024)
+                val audioBufInfo = MediaCodec.BufferInfo()
+                while (true) {
+                    audioBufInfo.offset = 0
+                    audioBufInfo.size = audioExtractor.readSampleData(audioBuf, 0)
+                    if (audioBufInfo.size < 0) break
+                    audioBufInfo.presentationTimeUs = audioExtractor.sampleTime
+                    audioBufInfo.flags = audioExtractor.sampleFlags
+                    muxer.writeSampleData(muxerAudioTrack, audioBuf, audioBufInfo)
+                    if (!audioExtractor.advance()) break
+                }
+            }
 
-            return@withContext outputFile.exists() && outputFile.length() > 0L
+            onProgress(93, "Finalizing output file...")
+
+            muxer.stop()
+            muxer.release(); muxer = null
+            decoder.stop(); decoder.release(); decoder = null
+            encoder.stop(); encoder.release(); encoder = null
+            extractor.release()
+            try { audioExtractor.release() } catch (_: Exception) {}
+            try { inputSurface?.release(); inputSurface = null } catch (_: Exception) {}
+
+            val outOk = outputFile.exists() && outputFile.length() > 0L
+            com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer",
+                "Transcoding finished: encoded $frameCount frames → ${outputFile.length() / 1024} KB (source was ${srcFile.length() / 1024} KB)")
+            return@withContext outOk
 
         } catch (e: Exception) {
             com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "processVideoPipeline error: ${e.message}", e)
+            try { muxer?.stop() } catch (_: Exception) {}
             try { muxer?.release() } catch (_: Exception) {}
+            try { decoder?.stop(); decoder?.release() } catch (_: Exception) {}
+            try { encoder?.stop(); encoder?.release() } catch (_: Exception) {}
             try { extractor.release() } catch (_: Exception) {}
+            try { inputSurface?.release() } catch (_: Exception) {}
 
-            // Robust safety fallback: If demuxing failed, copy source directly
-            val srcFile = plan.source.file
-            if (srcFile.exists() && srcFile.length() > 0L) {
+            // Safety fallback — never leave the output with 0 bytes
+            if (srcFile.exists() && srcFile.length() > 0L && (!outputFile.exists() || outputFile.length() == 0L)) {
+                com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer",
+                    "Transcoding failed, performing safe remux copy as fallback.")
                 try {
                     srcFile.copyTo(outputFile, overwrite = true)
-                    return@withContext true
+                    return@withContext false // report as not-optimized even though file was copied
                 } catch (_: Exception) {}
             }
             return@withContext false
