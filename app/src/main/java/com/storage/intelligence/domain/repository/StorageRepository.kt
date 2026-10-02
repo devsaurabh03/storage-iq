@@ -8,7 +8,10 @@ import kotlinx.coroutines.flow.Flow
 import java.io.File
 
 interface StorageRepository {
+    /** Full scan: all MediaStore rows, directory traversal, stale-row reconciliation. */
     fun scanStorage(): Flow<ScanProgress>
+    /** Delta scan: only rows modified after sinceTimestampSec; skips directory traversal & reconciliation. */
+    fun scanStorageDelta(sinceTimestampSec: Long): Flow<ScanProgress>
     fun getStorageOverviewFlow(): Flow<StorageOverview>
     fun getFilesByCategoryFlow(category: StorageCategory): Flow<List<FileItem>>
     fun getLargeFilesFlow(minSizeBytes: Long): Flow<List<FileItem>>

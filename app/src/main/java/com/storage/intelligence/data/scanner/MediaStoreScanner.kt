@@ -28,34 +28,55 @@ class MediaStoreScanner @Inject constructor(
     @ApplicationContext private val context: Context,
     private val fileMetadataDao: FileMetadataDao
 ) {
-    fun scanStorageIncremental(): Flow<ScanProgress> = flow {
+    /**
+     * Incremental storage scan.
+     *
+     * @param sinceTimestampSec  If > 0, only files modified after this Unix-second timestamp
+     *                           are fetched from MediaStore (delta scan). Pass 0 for a full scan.
+     * @param reconcileDeleted   If true, stale DB rows whose files no longer exist are removed.
+     *                           Set false for quick delta scans; true for periodic full reconciliation.
+     */
+    fun scanStorageIncremental(
+        sinceTimestampSec: Long = 0L,
+        reconcileDeleted: Boolean = true
+    ): Flow<ScanProgress> = flow {
         val resolver = context.contentResolver
         val filesToSave = mutableListOf<FileMetadataEntity>()
 
-        com.storage.intelligence.core.logging.AppLogger.i("MediaStoreScanner", "Beginning incremental storage scan...")
-        emit(ScanProgress(0, 0, "Querying MediaStore..."))
+        val isDelta = sinceTimestampSec > 0L
+        val logTag = if (isDelta) "delta since ${sinceTimestampSec}s" else "full"
+        com.storage.intelligence.core.logging.AppLogger.i("MediaStoreScanner", "Beginning $logTag storage scan...")
+        emit(ScanProgress(0, 0, if (isDelta) "Checking for new files..." else "Querying MediaStore..."))
 
         try {
             val projection = arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.DATA,
-            MediaStore.Files.FileColumns.DISPLAY_NAME,
-            MediaStore.Files.FileColumns.SIZE,
-            MediaStore.Files.FileColumns.MIME_TYPE,
-            MediaStore.Files.FileColumns.DATE_MODIFIED,
-            MediaStore.Files.FileColumns.WIDTH,
-            MediaStore.Files.FileColumns.HEIGHT,
-            MediaStore.Files.FileColumns.MEDIA_TYPE
-        )
+                MediaStore.Files.FileColumns._ID,
+                MediaStore.Files.FileColumns.DATA,
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.SIZE,
+                MediaStore.Files.FileColumns.MIME_TYPE,
+                MediaStore.Files.FileColumns.DATE_MODIFIED,
+                MediaStore.Files.FileColumns.WIDTH,
+                MediaStore.Files.FileColumns.HEIGHT,
+                MediaStore.Files.FileColumns.MEDIA_TYPE
+            )
 
-        val uri: Uri = MediaStore.Files.getContentUri("external")
-        val cursor: Cursor? = resolver.query(
-            uri,
-            projection,
-            "${MediaStore.Files.FileColumns.SIZE} > 0",
-            null,
-            "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
-        )
+            // Delta filter: only fetch files changed since last scan
+            val selection = if (isDelta) {
+                "${MediaStore.Files.FileColumns.SIZE} > 0 AND ${MediaStore.Files.FileColumns.DATE_MODIFIED} > ?"
+            } else {
+                "${MediaStore.Files.FileColumns.SIZE} > 0"
+            }
+            val selectionArgs = if (isDelta) arrayOf(sinceTimestampSec.toString()) else null
+
+            val uri: Uri = MediaStore.Files.getContentUri("external")
+            val cursor: Cursor? = resolver.query(
+                uri,
+                projection,
+                selection,
+                selectionArgs,
+                "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
+            )
 
         val activeIds = HashSet<Long>()
         var total = 0
@@ -135,24 +156,30 @@ class MediaStoreScanner @Inject constructor(
             }
         }
 
-        // Direct directory scanning phase for messaging & complete directories
-        scanDirectDirectories(filesToSave)
-        if (filesToSave.isNotEmpty()) {
-            fileMetadataDao.insertOrUpdateAll(filesToSave)
-            filesToSave.clear()
+        // Direct directory scanning phase — only run on full scans to avoid overhead
+        if (!isDelta) {
+            scanDirectDirectories(filesToSave)
+            if (filesToSave.isNotEmpty()) {
+                fileMetadataDao.insertOrUpdateAll(filesToSave)
+                filesToSave.clear()
+            }
         }
 
-        // MediaStore Delta Reconciliation: Remove files deleted externally
-        val dbIds = fileMetadataDao.getAllIds()
-        val deletedIds = dbIds.filter { !activeIds.contains(it) && !File(fileMetadataDao.getById(it)?.path ?: "").exists() }
-        if (deletedIds.isNotEmpty()) {
-            fileMetadataDao.deleteByIds(deletedIds)
+        // MediaStore Delta Reconciliation: only remove stale rows on full scans
+        if (reconcileDeleted) {
+            val dbIds = fileMetadataDao.getAllIds()
+            val deletedIds = dbIds.filter { !activeIds.contains(it) && !File(fileMetadataDao.getById(it)?.path ?: "").exists() }
+            if (deletedIds.isNotEmpty()) {
+                fileMetadataDao.deleteByIds(deletedIds)
+                com.storage.intelligence.core.logging.AppLogger.i("MediaStoreScanner", "Removed ${deletedIds.size} stale DB records.")
+            }
         }
 
-        com.storage.intelligence.core.logging.AppLogger.i("MediaStoreScanner", "Scan complete: $scanned media items cataloged (${deletedIds.size} stale items removed).")
+        com.storage.intelligence.core.logging.AppLogger.i("MediaStoreScanner",
+            "Scan complete ($logTag): $scanned media items processed.")
         emit(ScanProgress(total, total, "Insights up to date", isComplete = true))
     } catch (e: Exception) {
-        com.storage.intelligence.core.logging.AppLogger.e("MediaStoreScanner", "Error during incremental storage scan", e)
+        com.storage.intelligence.core.logging.AppLogger.e("MediaStoreScanner", "Error during storage scan", e)
         emit(ScanProgress(0, 0, "Scan interrupted: ${e.localizedMessage}", isComplete = true))
     }
 }

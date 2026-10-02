@@ -31,7 +31,12 @@ class StorageRepositoryImpl @Inject constructor(
     private val fileDao: FileMetadataDao
 ) : StorageRepository {
 
-    override fun scanStorage(): Flow<ScanProgress> = scanner.scanStorageIncremental()
+    override fun scanStorage(): Flow<ScanProgress> =
+        scanner.scanStorageIncremental(sinceTimestampSec = 0L, reconcileDeleted = true)
+
+    override fun scanStorageDelta(sinceTimestampSec: Long): Flow<ScanProgress> =
+        scanner.scanStorageIncremental(sinceTimestampSec = sinceTimestampSec, reconcileDeleted = false)
+
 
     override fun getStorageOverviewFlow(): Flow<StorageOverview> {
         return fileDao.getAllFilesFlow().map { allEntities ->

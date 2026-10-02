@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,22 +23,30 @@ class UserPreferencesRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private object Keys {
-        val HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
-        val LAST_SCAN_TIMESTAMP = longPreferencesKey("last_scan_timestamp")
-        val SUBSCRIPTION_STATUS = stringPreferencesKey("subscription_status")
-        val IS_DARK_MODE = booleanPreferencesKey("is_dark_mode")
+        val HAS_COMPLETED_ONBOARDING    = booleanPreferencesKey("has_completed_onboarding")
+        val LAST_SCAN_TIMESTAMP         = longPreferencesKey("last_scan_timestamp")
+        val LAST_FULL_SCAN_TIMESTAMP    = longPreferencesKey("last_full_scan_timestamp")
+        val SUBSCRIPTION_STATUS         = stringPreferencesKey("subscription_status")
+        val IS_DARK_MODE                = booleanPreferencesKey("is_dark_mode")
 
         // Optimization policies
-        val ONLY_WHILE_CHARGING = booleanPreferencesKey("only_while_charging")
-        val PAUSE_ON_LOW_BATTERY = booleanPreferencesKey("pause_on_low_battery")
-        val PAUSE_ON_THERMAL_STRESS = booleanPreferencesKey("pause_on_thermal_stress")
-        val OPT_IN_TELEMETRY = booleanPreferencesKey("opt_in_telemetry")
+        val ONLY_WHILE_CHARGING         = booleanPreferencesKey("only_while_charging")
+        val PAUSE_ON_LOW_BATTERY        = booleanPreferencesKey("pause_on_low_battery")
+        val PAUSE_ON_THERMAL_STRESS     = booleanPreferencesKey("pause_on_thermal_stress")
+        val OPT_IN_TELEMETRY            = booleanPreferencesKey("opt_in_telemetry")
 
         // Activity metrics
-        val OPTIMIZED_VIDEOS_COUNT = intPreferencesKey("optimized_videos_count")
-        val SAVED_VIDEO_BYTES = longPreferencesKey("saved_video_bytes")
-        val OPTIMIZED_PHOTOS_COUNT = intPreferencesKey("optimized_photos_count")
-        val SAVED_PHOTO_BYTES = longPreferencesKey("saved_photo_bytes")
+        val OPTIMIZED_VIDEOS_COUNT      = intPreferencesKey("optimized_videos_count")
+        val SAVED_VIDEO_BYTES           = longPreferencesKey("saved_video_bytes")
+        val OPTIMIZED_PHOTOS_COUNT      = intPreferencesKey("optimized_photos_count")
+        val SAVED_PHOTO_BYTES           = longPreferencesKey("saved_photo_bytes")
+    }
+
+    companion object {
+        /** Minimum interval between incremental (delta) scans: 15 minutes */
+        const val DELTA_SCAN_INTERVAL_MS   = 15L  * 60 * 1000
+        /** Minimum interval between full reconciliation scans: 6 hours */
+        const val FULL_SCAN_INTERVAL_MS    = 6L   * 60 * 60 * 1000
     }
 
     val hasCompletedOnboarding: Flow<Boolean> = context.dataStore.data.map { preferences ->
@@ -94,9 +103,37 @@ class UserPreferencesRepository @Inject constructor(
         }
     }
 
+    val lastFullScanTimestamp: Flow<Long> = context.dataStore.data.map { preferences ->
+        preferences[Keys.LAST_FULL_SCAN_TIMESTAMP] ?: 0L
+    }
+
+    /**
+     * Returns true if enough time has passed to warrant a new incremental (delta) scan.
+     * Uses a one-shot read rather than a Flow to allow synchronous decision in init blocks.
+     */
+    suspend fun isDeltaScanStale(): Boolean {
+        val lastScan = context.dataStore.data.map { it[Keys.LAST_SCAN_TIMESTAMP] ?: 0L }.first()
+        return System.currentTimeMillis() - lastScan > DELTA_SCAN_INTERVAL_MS
+    }
+
+    /**
+     * Returns true if enough time has passed to warrant a full reconciliation scan.
+     */
+    suspend fun isFullScanStale(): Boolean {
+        val lastFull = context.dataStore.data.map { it[Keys.LAST_FULL_SCAN_TIMESTAMP] ?: 0L }.first()
+        return System.currentTimeMillis() - lastFull > FULL_SCAN_INTERVAL_MS
+    }
+
     suspend fun updateLastScanTimestamp(timestampMs: Long) {
         context.dataStore.edit { preferences ->
             preferences[Keys.LAST_SCAN_TIMESTAMP] = timestampMs
+        }
+    }
+
+    suspend fun markFullScanComplete(timestampMs: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.LAST_SCAN_TIMESTAMP]      = timestampMs
+            preferences[Keys.LAST_FULL_SCAN_TIMESTAMP] = timestampMs
         }
     }
 
