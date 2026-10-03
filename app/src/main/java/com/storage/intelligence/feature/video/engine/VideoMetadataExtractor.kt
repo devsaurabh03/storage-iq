@@ -23,7 +23,8 @@ data class VideoCharacteristics(
     val mimeType: String,
     val isHdr: Boolean,
     val audioCodec: String?,
-    val keyframeIndex: List<KeyframeIndex> = emptyList()
+    val keyframeIndex: List<KeyframeIndex> = emptyList(),
+    val modifiedTimeMs: Long = 0L
 )
 
 object VideoMetadataExtractor {
@@ -31,7 +32,9 @@ object VideoMetadataExtractor {
     fun extractCharacteristics(
         file: File,
         context: android.content.Context? = null,
-        uri: android.net.Uri? = null
+        uri: android.net.Uri? = null,
+        fileSizeBytes: Long = 0L,
+        modifiedTimeMs: Long = 0L
     ): VideoCharacteristics {
         val extractor = MediaExtractor()
         var width = 1920
@@ -101,14 +104,17 @@ object VideoMetadataExtractor {
             try { extractor.release() } catch (_: Exception) {}
         }
 
+        val finalSize = if (fileSizeBytes > 0L) fileSizeBytes else (try { file.length() } catch (_: Exception) { 0L })
+        val finalModified = if (modifiedTimeMs > 0L) modifiedTimeMs else (try { file.lastModified() } catch (_: Exception) { 0L })
+
         if (bitrate <= 0 && durationMs > 0) {
-            bitrate = ((file.length() * 8) / (durationMs / 1000f)).toInt().coerceAtLeast(1_000_000)
+            bitrate = if (finalSize > 0) ((finalSize * 8) / (durationMs / 1000f)).toInt().coerceAtLeast(1_000_000) else 10_000_000
         }
 
         return VideoCharacteristics(
             file = file,
             name = file.name,
-            sizeBytes = file.length(),
+            sizeBytes = finalSize,
             durationMs = durationMs,
             width = width,
             height = height,
@@ -118,7 +124,8 @@ object VideoMetadataExtractor {
             mimeType = mimeType,
             isHdr = isHdr,
             audioCodec = audioCodec,
-            keyframeIndex = keyframeList
+            keyframeIndex = keyframeList,
+            modifiedTimeMs = finalModified
         )
     }
 }

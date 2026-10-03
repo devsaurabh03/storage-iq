@@ -67,13 +67,14 @@ fun VideoActivityScreen(
     val previewFile = remember(previewJob) {
         previewJob?.outputPath?.let { path ->
             val file = File(path)
+            val exists = try { file.exists() } catch (_: Exception) { false }
             FileItem(
                 id = path.hashCode().toLong(),
                 path = path,
-                name = file.name,
-                sizeBytes = if (file.exists()) file.length() else 0L,
+                name = previewJob?.title ?: (if (exists) file.name else "Optimized Video.mp4"),
+                sizeBytes = if (exists) file.length() else (previewJob?.originalSizeBytes?.minus(previewJob?.savedBytes ?: 0L)?.coerceAtLeast(0L) ?: 0L),
                 mimeType = "video/mp4",
-                modifiedTimeMs = if (file.exists()) file.lastModified() else System.currentTimeMillis(),
+                modifiedTimeMs = if (exists) (try { file.lastModified() } catch (_: Exception) { System.currentTimeMillis() }) else System.currentTimeMillis(),
                 category = StorageCategory.VIDEOS
             )
         }

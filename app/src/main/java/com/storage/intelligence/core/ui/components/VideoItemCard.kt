@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +49,10 @@ fun VideoItemCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val fileExists = remember(video.file.absolutePath) {
+                    try { video.file.exists() } catch (_: Exception) { false }
+                }
+
                 // Video Thumbnail with Tap-to-Play
                 Box(
                     modifier = Modifier
@@ -57,7 +62,7 @@ fun VideoItemCard(
                         .clickable { (onPlayClick ?: onClick)() },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (video.file.exists()) {
+                    if (fileExists) {
                         AsyncImage(
                             model = video.file.absolutePath,
                             contentDescription = video.name,
@@ -100,7 +105,7 @@ fun VideoItemCard(
                                 .padding(horizontal = 4.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = String.format("%d:%02d", mins, secs),
+                                text = String.format(java.util.Locale.US, "%d:%02d", mins, secs),
                                 color = Color.White,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold

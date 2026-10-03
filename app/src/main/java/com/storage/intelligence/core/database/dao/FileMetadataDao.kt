@@ -73,6 +73,9 @@ interface FileMetadataDao {
     @Query("SELECT COUNT(*) FROM file_metadata")
     suspend fun getTotalFileCount(): Int
 
+    @Query("SELECT COUNT(*) FROM file_metadata")
+    fun getTotalFileCountFlow(): Flow<Int>
+
     @Query("SELECT * FROM file_metadata WHERE modifiedTimeMs <= :beforeTimestampMs AND isOptimized = 0 ORDER BY sizeBytes DESC")
     fun getStaleFilesFlow(beforeTimestampMs: Long): Flow<List<FileMetadataEntity>>
 

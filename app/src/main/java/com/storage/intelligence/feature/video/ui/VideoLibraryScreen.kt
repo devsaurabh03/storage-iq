@@ -3,6 +3,7 @@ package com.storage.intelligence.feature.video.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import com.storage.intelligence.core.ui.components.VideoItemCard
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.feature.video.engine.VideoCharacteristics
-
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
@@ -35,15 +35,39 @@ fun VideoLibraryScreen(
     modifier: Modifier = Modifier
 ) {
     var activeFilter by remember { mutableStateOf(VideoSortFilter.RECOMMENDED) }
+    val listState = rememberLazyListState()
+
+    // Scroll to top when active filter changes
+    LaunchedEffect(activeFilter) {
+        try {
+            listState.scrollToItem(0)
+        } catch (_: Exception) {}
+    }
 
     val sortedVideos = remember(videos, activeFilter) {
-        when (activeFilter) {
-            VideoSortFilter.LARGEST -> videos.sortedByDescending { it.sizeBytes }
-            VideoSortFilter.RECENT -> videos.sortedByDescending { it.file.lastModified() }
-            VideoSortFilter.RECOMMENDED -> videos.sortedWith(
-                compareByDescending<VideoCharacteristics> { it.width >= 3840 }
-                    .thenByDescending { it.sizeBytes }
-            )
+        try {
+            val distinctVideos = videos.distinctBy { it.file.absolutePath }
+            when (activeFilter) {
+                VideoSortFilter.LARGEST -> distinctVideos.sortedByDescending { it.sizeBytes }
+                VideoSortFilter.RECENT -> distinctVideos.sortedByDescending { video ->
+                    if (video.modifiedTimeMs > 0L) {
+                        video.modifiedTimeMs
+                    } else {
+                        try {
+                            video.file.lastModified()
+                        } catch (_: Exception) {
+                            0L
+                        }
+                    }
+                }
+                VideoSortFilter.RECOMMENDED -> distinctVideos.sortedWith(
+                    compareByDescending<VideoCharacteristics> { it.width >= 3840 }
+                        .thenByDescending { it.sizeBytes }
+                )
+            }
+        } catch (e: Exception) {
+            com.storage.intelligence.core.logging.AppLogger.e("VideoLibraryScreen", "Sort failed: ${e.message}", e)
+            videos.distinctBy { it.file.absolutePath }
         }
     }
 
@@ -80,10 +104,14 @@ fun VideoLibraryScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                VideoSortFilter.entries.forEach { filter ->
+                listOf(VideoSortFilter.RECOMMENDED, VideoSortFilter.LARGEST, VideoSortFilter.RECENT).forEach { filter ->
                     FilterChip(
                         selected = activeFilter == filter,
-                        onClick = { activeFilter = filter },
+                        onClick = {
+                            if (activeFilter != filter) {
+                                activeFilter = filter
+                            }
+                        },
                         label = { Text(filter.displayName) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = EmeraldPrimary,
@@ -108,11 +136,15 @@ fun VideoLibraryScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(sortedVideos) { video ->
+                    items(
+                        items = sortedVideos,
+                        key = { it.file.absolutePath }
+                    ) { video ->
                         val isModern = video.codecName.equals("AV1", ignoreCase = true) ||
                                        video.codecName.equals("HEVC", ignoreCase = true) ||
                                        video.codecName.equals("H.265", ignoreCase = true)

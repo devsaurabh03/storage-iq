@@ -309,14 +309,20 @@ class VideoViewModel @Inject constructor(
                     )
                 }
 
-                // ── 3. Commit optimized file to public Movies/ ────────────────────
-                // Keep the original file name so it replaces the original cleanly
-                // (no "optimized_" prefix, no sub-folder). The original gets trashed below.
+                // ── 3. Move original to trash FIRST (safe & reversible) ───────────
+                // Trashing the original before writing the final file guarantees no naming collisions,
+                // avoids duplicate copies, and ensures the new output cannot be accidentally trashed.
+                updateJob(jobId) {
+                    it.copy(progressPercent = 92, statusText = "Moving original to trash...")
+                }
+                trashOriginalVideo(plan.source)
+
+                // ── 4. Commit optimized file to public Movies/ ────────────────────
                 val targetFileName = "${cleanBaseName}.mp4"
                 var finalPublicPath = ""
                 var finalInsertUri: Uri? = null
 
-                // Strategy A: Direct file write (pre-Android 10 or MANAGE_EXTERNAL_STORAGE)
+                // Strategy A: Direct file write (MANAGE_EXTERNAL_STORAGE or pre-Android 10)
                 try {
                     val moviesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
                     moviesDir.mkdirs()
@@ -329,8 +335,8 @@ class VideoViewModel @Inject constructor(
                     com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "Direct Movies write failed: ${e.message}")
                 }
 
-                // Strategy B: MediaStore Scoped Storage (Android 10+)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Strategy B: MediaStore Scoped Storage (Android 10+) fallback if direct write failed
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && finalPublicPath.isEmpty()) {
                     try {
                         val contentValues = ContentValues().apply {
                             put(MediaStore.Video.Media.DISPLAY_NAME, targetFileName)
@@ -350,7 +356,7 @@ class VideoViewModel @Inject constructor(
                             contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
                             context.contentResolver.update(insertUri, contentValues, null, null)
                             finalInsertUri = insertUri
-                            if (finalPublicPath.isEmpty()) finalPublicPath = insertUri.toString()
+                            finalPublicPath = insertUri.toString()
                         }
                     } catch (e: Exception) {
                         com.storage.intelligence.core.logging.AppLogger.w("VideoOptimizer", "MediaStore insert failed: ${e.message}")
@@ -371,7 +377,7 @@ class VideoViewModel @Inject constructor(
                             context,
                             arrayOf(finalPublicPath),
                             arrayOf("video/mp4")
-                        ) { path, uri ->
+                        ) { path, _ ->
                             com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "MediaScanner indexed optimized: $path")
                         }
                     } catch (e: Exception) {
@@ -381,14 +387,6 @@ class VideoViewModel @Inject constructor(
 
                 // Clean temp cache file
                 try { if (tempOutputFile.exists()) tempOutputFile.delete() } catch (_: Exception) {}
-
-                // ── 4. Move original to trash (safe & reversible) ─────────────────
-                // The original is NEVER permanently deleted here — it goes to system
-                // trash so the user can restore it from Files app if they change their mind.
-                updateJob(jobId) {
-                    it.copy(progressPercent = 95, statusText = "Moving original to trash...")
-                }
-                trashOriginalVideo(plan.source)
 
                 // ── 5. Calculate actual space reclaimed ───────────────────────────
                 val originalSizeBytes = plan.source.sizeBytes
@@ -402,8 +400,8 @@ class VideoViewModel @Inject constructor(
                 val effectiveSaved   = if (actualSavedBytes > 0) actualSavedBytes else plan.estimatedSavingsBytes
 
                 val savedMb  = effectiveSaved / (1024.0 * 1024.0)
-                val savedStr = if (savedMb >= 1024) String.format("%.2f GB", savedMb / 1024.0)
-                               else String.format("%.0f MB", savedMb)
+                val savedStr = if (savedMb >= 1024) String.format(java.util.Locale.US, "%.2f GB", savedMb / 1024.0)
+                               else String.format(java.util.Locale.US, "%.0f MB", savedMb)
 
                 // ── 6. Index optimized file into Room ─────────────────────────────
                 try {
@@ -451,14 +449,54 @@ class VideoViewModel @Inject constructor(
                 // Persist savings to DataStore
                 preferencesRepository.recordVideoOptimized(effectiveSaved)
 
-                // Remove this video from the "needs optimization" list in UI
+                // ── 8. Construct optimized VideoCharacteristics & Update UI state ──
+                val optimizedVideo = VideoCharacteristics(
+                    file = if (finalFile.exists()) finalFile else plan.source.file,
+                    name = targetFileName,
+                    sizeBytes = finalSizeBytes,
+                    durationMs = plan.source.durationMs,
+                    width = plan.targetWidth,
+                    height = plan.targetHeight,
+                    fps = plan.source.fps,
+                    bitrateBps = plan.targetBitrateBps,
+                    codecName = plan.targetCodecName,
+                    mimeType = "video/mp4",
+                    isHdr = false,
+                    audioCodec = plan.source.audioCodec,
+                    modifiedTimeMs = System.currentTimeMillis()
+                )
+
                 _uiState.update { current ->
+                    val updatedVideos = current.videos.map {
+                        if (it.file.absolutePath == plan.source.file.absolutePath) optimizedVideo else it
+                    }.let { list ->
+                        if (list.none { it.file.absolutePath == optimizedVideo.file.absolutePath }) {
+                            list + optimizedVideo
+                        } else list
+                    }
+
+                    val updatedSelected = if (current.selectedVideo?.file?.absolutePath == plan.source.file.absolutePath ||
+                                             current.selectedVideo == null) {
+                        optimizedVideo
+                    } else current.selectedVideo
+
+                    val profile = current.deviceProfile ?: CodecCapabilityManager.detectCapabilities()
+                    val updatedPlan = if (updatedSelected.file.absolutePath == optimizedVideo.file.absolutePath) {
+                        VideoOptimizationEngine.generatePlan(optimizedVideo, profile, OptimizationMode.BALANCED)
+                    } else current.selectedVideoPlan
+
                     current.copy(
+                        videos = updatedVideos,
+                        selectedVideo = updatedSelected,
+                        selectedVideoPlan = updatedPlan,
                         potentialSavingsBytes = (current.potentialSavingsBytes - effectiveSaved).coerceAtLeast(0L),
                         totalStorageBytes = (current.totalStorageBytes - effectiveSaved).coerceAtLeast(0L),
                         optimizableVideos = current.optimizableVideos.filter {
                             it.file.absolutePath != plan.source.file.absolutePath
-                        }
+                        },
+                        alreadyOptimalVideos = current.alreadyOptimalVideos.filter {
+                            it.file.absolutePath != plan.source.file.absolutePath
+                        } + optimizedVideo
                     )
                 }
 
@@ -484,12 +522,8 @@ class VideoViewModel @Inject constructor(
     /**
      * Moves the original video to system trash (recoverable).
      *
-     * Android 11+ : uses MediaStore.setTrashed() — file appears in Files app Trash.
-     * Android 10  : marks IS_PENDING in MediaStore so it's hidden but not gone.
-     * Older       : moves the file to a .Trash folder on the same volume.
-     *
-     * The original is NEVER permanently deleted here. The user can always
-     * restore it from Files app → Trash within 30 days.
+     * Android 11+ : uses MediaStore.setTrashed() on the specific source file path.
+     * Android 10 / fallback: moves the file to a .Trash folder on the same volume.
      */
     private suspend fun trashOriginalVideo(source: com.storage.intelligence.feature.video.engine.VideoCharacteristics) {
         withContext(Dispatchers.IO) {
@@ -497,10 +531,10 @@ class VideoViewModel @Inject constructor(
                 val srcFile = source.file
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // Android 11+: MediaStore.setTrashed is the official API
+                    // Android 11+: Query MediaStore strictly by source file DATA path
                     val projection = arrayOf(MediaStore.Video.Media._ID)
-                    val selection = "${MediaStore.Video.Media.DISPLAY_NAME} = ? OR ${MediaStore.Video.Media.DATA} = ?"
-                    val selectionArgs = arrayOf(source.name, srcFile.absolutePath)
+                    val selection = "${MediaStore.Video.Media.DATA} = ?"
+                    val selectionArgs = arrayOf(srcFile.absolutePath)
                     context.contentResolver.query(
                         MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                         projection, selection, selectionArgs, null
@@ -866,7 +900,8 @@ class VideoViewModel @Inject constructor(
                 android.provider.MediaStore.Video.Media.DURATION,
                 android.provider.MediaStore.Video.Media.WIDTH,
                 android.provider.MediaStore.Video.Media.HEIGHT,
-                android.provider.MediaStore.Video.Media.MIME_TYPE
+                android.provider.MediaStore.Video.Media.MIME_TYPE,
+                android.provider.MediaStore.Video.Media.DATE_MODIFIED
             )
 
             val uri = android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -887,6 +922,7 @@ class VideoViewModel @Inject constructor(
                 val widthCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.WIDTH)
                 val heightCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.HEIGHT)
                 val mimeCol = c.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.MIME_TYPE)
+                val modCol = c.getColumnIndex(android.provider.MediaStore.Video.Media.DATE_MODIFIED)
 
                 com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "MediaStore returned ${c.count} video records.")
 
@@ -902,6 +938,8 @@ class VideoViewModel @Inject constructor(
                     val width = c.getInt(widthCol).let { if (it > 0) it else 1920 }
                     val height = c.getInt(heightCol).let { if (it > 0) it else 1080 }
                     val mime = c.getString(mimeCol) ?: "video/mp4"
+                    val modDateSec = if (modCol != -1) c.getLong(modCol) else 0L
+                    val modTimeMs = if (modDateSec > 0) modDateSec * 1000L else (try { file.lastModified() } catch (_: Exception) { 0L })
 
                     val contentUri = android.content.ContentUris.withAppendedId(
                         android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
@@ -909,7 +947,13 @@ class VideoViewModel @Inject constructor(
                     )
 
                     val item = try {
-                        VideoMetadataExtractor.extractCharacteristics(file, context, contentUri)
+                        VideoMetadataExtractor.extractCharacteristics(
+                            file = file,
+                            context = context,
+                            uri = contentUri,
+                            fileSizeBytes = size,
+                            modifiedTimeMs = modTimeMs
+                        )
                     } catch (e: Exception) {
                         com.storage.intelligence.core.logging.AppLogger.w(
                             "VideoViewModel",
@@ -927,7 +971,8 @@ class VideoViewModel @Inject constructor(
                             codecName = if (mime.contains("hevc") || mime.contains("h265")) "HEVC" else "H.264",
                             mimeType = mime,
                             isHdr = false,
-                            audioCodec = "AAC"
+                            audioCodec = "AAC",
+                            modifiedTimeMs = modTimeMs
                         )
                     }
                     resultList.add(item)
@@ -940,13 +985,18 @@ class VideoViewModel @Inject constructor(
         // Merge any real device videos discovered from scanner database
         try {
             val dbVideos = fileDao.getFilesByCategory(com.storage.intelligence.domain.model.StorageCategory.VIDEOS.name)
-            val existingPaths = resultList.map { it.file.absolutePath }.toSet()
+            val existingPaths = resultList.map { it.file.absolutePath }.toMutableSet()
             for (dbVideo in dbVideos) {
                 if (!existingPaths.contains(dbVideo.path)) {
+                    existingPaths.add(dbVideo.path)
                     val file = File(dbVideo.path)
                     if (file.exists() && file.length() > 0) {
                         val chars = try {
-                            VideoMetadataExtractor.extractCharacteristics(file)
+                            VideoMetadataExtractor.extractCharacteristics(
+                                file = file,
+                                fileSizeBytes = dbVideo.sizeBytes,
+                                modifiedTimeMs = dbVideo.modifiedTimeMs
+                            )
                         } catch (e: Exception) {
                             com.storage.intelligence.core.logging.AppLogger.w(
                                 "VideoViewModel",
@@ -964,7 +1014,8 @@ class VideoViewModel @Inject constructor(
                                 codecName = if (dbVideo.mimeType.contains("hevc") || dbVideo.mimeType.contains("h265")) "HEVC" else "H.264",
                                 mimeType = dbVideo.mimeType,
                                 isHdr = false,
-                                audioCodec = "AAC"
+                                audioCodec = "AAC",
+                                modifiedTimeMs = dbVideo.modifiedTimeMs
                             )
                         }
                         resultList.add(chars)
@@ -975,6 +1026,6 @@ class VideoViewModel @Inject constructor(
             com.storage.intelligence.core.logging.AppLogger.e("VideoViewModel", "Error merging db videos: ${e.message}", e)
         }
 
-        resultList
+        resultList.distinctBy { it.file.absolutePath }
     }
 }

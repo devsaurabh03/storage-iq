@@ -3,6 +3,7 @@ package com.storage.intelligence.feature.dashboard
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.storage.intelligence.core.common.Result
+import com.storage.intelligence.core.database.dao.FileMetadataDao
 import com.storage.intelligence.core.datastore.UserPreferencesRepository
 import com.storage.intelligence.domain.model.StorageGrowthReport
 import com.storage.intelligence.domain.model.StorageOverview
@@ -29,6 +30,7 @@ class DashboardViewModel @Inject constructor(
     getStorageGrowthUseCase: GetStorageGrowthUseCase,
     private val storageRepository: StorageRepository,
     private val preferencesRepository: UserPreferencesRepository,
+    private val fileDao: FileMetadataDao,
     cpuMonitoringEngine: CpuMonitoringEngine
 ) : ViewModel() {
 
@@ -41,20 +43,35 @@ class DashboardViewModel @Inject constructor(
     val cpuSnapshot: StateFlow<CpuSnapshot?> = cpuMonitoringEngine.startMonitoring()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    /**
+     * Emits Result.Loading on first launch until:
+     *   (a) the DB has at least 1 file (scan is populating data), OR
+     *   (b) the scan finishes (_isScanning flips false).
+     *
+     * On subsequent opens Room already has data so this resolves immediately.
+     */
     val uiState: StateFlow<Result<DashboardUiState>> = combine(
         getStorageOverviewUseCase(),
         getStorageGrowthUseCase(30),
         _isScanning,
-        _scanProgressText
-    ) { overview, growth, scanning, progressText ->
-        DashboardUiState(
-            overview = overview,
-            growthReport = growth,
-            isScanning = scanning,
-            scanProgressText = progressText
-        )
+        _scanProgressText,
+        fileDao.getTotalFileCountFlow()
+    ) { overview, growth, scanning, progressText, fileCount ->
+        // On first launch: DB is empty AND scan is still running → keep loading
+        if (fileCount == 0 && scanning) {
+            null // sentinel → mapped to Result.Loading below
+        } else {
+            DashboardUiState(
+                overview = overview,
+                growthReport = growth,
+                isScanning = scanning,
+                scanProgressText = progressText
+            )
+        }
     }
-        .map<DashboardUiState, Result<DashboardUiState>> { Result.Success(it) }
+        .map<DashboardUiState?, Result<DashboardUiState>> { state ->
+            if (state == null) Result.Loading else Result.Success(state)
+        }
         .catch { error ->
             com.storage.intelligence.core.logging.AppLogger.e("DashboardViewModel", "Dashboard stream failure: ${error.message}", error)
             emit(Result.Error(error))
@@ -76,8 +93,8 @@ class DashboardViewModel @Inject constructor(
      * Tier 3 — Full: > 6 h since last full scan (or first ever launch) →
      *           full MediaStore traversal + directory walk + stale-row cleanup.
      *
-     * Room DB is always live via Flow so the UI never shows a blank/loading state
-     * at launch — it renders cached data immediately while the background scan runs.
+     * Room DB is always live via Flow so the UI never shows stale zero-data.
+     * On first launch, uiState holds Result.Loading until the DB is populated.
      */
     private suspend fun smartScanOnLaunch() {
         val isDeltaStale = preferencesRepository.isDeltaScanStale()
@@ -85,10 +102,12 @@ class DashboardViewModel @Inject constructor(
 
         when {
             !isDeltaStale -> {
+                // Cache is fresh — nothing to do. UI already shows live Room data.
                 com.storage.intelligence.core.logging.AppLogger.i("DashboardViewModel",
                     "Scan skipped — data is fresh (last scan < 15 min ago).")
             }
             !isFullStale -> {
+                // Delta scan: only process files modified since last scan
                 val lastScanTimeSec = preferencesRepository.lastScanTimestamp.first() / 1000L
                 com.storage.intelligence.core.logging.AppLogger.i("DashboardViewModel",
                     "Running delta scan since $lastScanTimeSec...")
@@ -96,6 +115,8 @@ class DashboardViewModel @Inject constructor(
                 preferencesRepository.updateLastScanTimestamp(System.currentTimeMillis())
             }
             else -> {
+                // Full scan: all MediaStore rows + directory walk + stale-row cleanup.
+                // Also the path taken on very first launch when DB is empty.
                 com.storage.intelligence.core.logging.AppLogger.i("DashboardViewModel",
                     "Running full scan (first launch or > 6 h since last full scan).")
                 runScan(delta = false, sinceTimestampSec = 0L)
