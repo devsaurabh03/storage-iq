@@ -435,17 +435,10 @@ fun WorldFactsLoadingView(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Animated Fact Content
-                    AnimatedContent(
+                    // Animated Fact Content (Lightweight Crossfade for low-RAM efficiency)
+                    Crossfade(
                         targetState = currentFact,
-                        transitionSpec = {
-                            (fadeIn(animationSpec = tween(300)) +
-                                    slideInVertically(animationSpec = tween(300)) { height -> height / 2 })
-                                .togetherWith(
-                                    fadeOut(animationSpec = tween(200)) +
-                                            slideOutVertically(animationSpec = tween(200)) { height -> -height / 2 }
-                                )
-                        },
+                        animationSpec = tween(250),
                         label = "factTransition"
                     ) { fact ->
                         Column {

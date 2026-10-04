@@ -85,7 +85,12 @@ class DashboardViewModel @Inject constructor(
                     ramPressure = pressure
                 )
             )
-            kotlinx.coroutines.delay(2000L)
+            val pollingDelayMs = when (pressure) {
+                MemoryPressure.CRITICAL, MemoryPressure.HIGH -> 2000L
+                MemoryPressure.MODERATE -> 3000L
+                MemoryPressure.LOW -> 5000L
+            }
+            kotlinx.coroutines.delay(pollingDelayMs)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LiveSystemTelemetry())
 

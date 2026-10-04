@@ -140,12 +140,12 @@ class MediaStoreScanner @Inject constructor(
                     filesToSave.add(entity)
                 }
 
-                if (filesToSave.size >= 150) {
+                if (filesToSave.size >= 500) {
                     fileMetadataDao.insertOrUpdateAll(filesToSave)
                     filesToSave.clear()
                 }
 
-                if (scanned % 150 == 0 || scanned == total) {
+                if (scanned % 500 == 0 || scanned == total) {
                     emit(ScanProgress(scanned, total, "Updating your storage insights…"))
                 }
             }
@@ -167,8 +167,8 @@ class MediaStoreScanner @Inject constructor(
 
         // MediaStore Delta Reconciliation: only remove stale rows on full scans
         if (reconcileDeleted) {
-            val dbIds = fileMetadataDao.getAllIds()
-            val deletedIds = dbIds.filter { !activeIds.contains(it) && !File(fileMetadataDao.getById(it)?.path ?: "").exists() }
+            val dbRecords = fileMetadataDao.getAllIdPathPairs()
+            val deletedIds = dbRecords.filter { !activeIds.contains(it.id) && !File(it.path).exists() }.map { it.id }
             if (deletedIds.isNotEmpty()) {
                 fileMetadataDao.deleteByIds(deletedIds)
                 com.storage.intelligence.core.logging.AppLogger.i("MediaStoreScanner", "Removed ${deletedIds.size} stale DB records.")

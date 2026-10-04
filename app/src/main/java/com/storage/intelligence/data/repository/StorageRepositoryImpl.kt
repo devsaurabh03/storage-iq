@@ -16,9 +16,18 @@ import com.storage.intelligence.data.scanner.ScanProgress
 import com.storage.intelligence.domain.model.*
 import com.storage.intelligence.domain.repository.StorageRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
@@ -31,247 +40,261 @@ class StorageRepositoryImpl @Inject constructor(
     private val fileDao: FileMetadataDao
 ) : StorageRepository {
 
+    private val repoScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    @OptIn(FlowPreview::class)
+    private val overviewSharedFlow: SharedFlow<StorageOverview> = fileDao.getAllFilesFlow()
+        .conflate()
+        .debounce(300L)
+        .map { allEntities -> buildOverview(allEntities) }
+        .flowOn(Dispatchers.Default)
+        .shareIn(
+            scope = repoScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            replay = 1
+        )
+
     override fun scanStorage(): Flow<ScanProgress> =
         scanner.scanStorageIncremental(sinceTimestampSec = 0L, reconcileDeleted = true)
 
     override fun scanStorageDelta(sinceTimestampSec: Long): Flow<ScanProgress> =
         scanner.scanStorageIncremental(sinceTimestampSec = sinceTimestampSec, reconcileDeleted = false)
 
-
-    override fun getStorageOverviewFlow(): Flow<StorageOverview> {
-        return fileDao.getAllFilesFlow().map { allEntities ->
-            val stat = StatFs(Environment.getDataDirectory().path)
-            val totalBytes = stat.blockCountLong * stat.blockSizeLong
-            val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
-            val usedBytes = (totalBytes - freeBytes).coerceAtLeast(0L)
-            val usedPercent = if (totalBytes > 0) ((usedBytes.toDouble() / totalBytes.toDouble()) * 100).toInt() else 0
-
-            val categoryMap = allEntities.groupBy { it.category }
-            val breakdowns = StorageCategory.entries.map { cat ->
-                val files = categoryMap[cat.name] ?: emptyList()
-                StorageCategoryBreakdown(
-                    category = cat,
-                    totalSizeBytes = files.sumOf { it.sizeBytes },
-                    fileCount = files.size
-                )
-            }
-
-            // Deterministic real-time duplicate calculation:
-            // Group files by SHA-256 hash and strictly count redundant copies only when 2 or more files have matching hashes.
-            val exactDupGroups = allEntities
-                .filter { !it.sha256Hash.isNullOrEmpty() }
-                .groupBy { it.sha256Hash!! }
-                .filter { it.value.size > 1 }
-
-            var dupVideosBytes = 0L
-            var dupPhotosBytes = 0L
-            var otherDuplicatesBytes = 0L
-
-            exactDupGroups.values.forEach { group ->
-                val sorted = group.sortedByDescending { it.modifiedTimeMs }
-                val redundantCopies = sorted.drop(1)
-                redundantCopies.forEach { dupFile ->
-                    when (dupFile.category) {
-                        StorageCategory.VIDEOS.name -> dupVideosBytes += dupFile.sizeBytes
-                        StorageCategory.PHOTOS.name -> dupPhotosBytes += dupFile.sizeBytes
-                        else -> otherDuplicatesBytes += dupFile.sizeBytes
-                    }
-                }
-            }
-
-            val ninetyDaysAgo = System.currentTimeMillis() - (90L * 24 * 60 * 60 * 1000)
-            val oldDownloadsBytes = allEntities.filter { it.isDownload && it.modifiedTimeMs < ninetyDaysAgo }.sumOf { it.sizeBytes }
-            val screenshotsBytes = allEntities.filter { it.isScreenshot }.sumOf { it.sizeBytes }
-
-            val totalRecoverable = dupVideosBytes + dupPhotosBytes + otherDuplicatesBytes + oldDownloadsBytes + screenshotsBytes
-
-            val recoverableSummary = RecoverableSpace(
-                totalRecoverableBytes = totalRecoverable,
-                duplicateVideosBytes = dupVideosBytes,
-                duplicatePhotosBytes = dupPhotosBytes,
-                oldDownloadsBytes = oldDownloadsBytes,
-                screenshotsBytes = screenshotsBytes,
-                otherRecoverableBytes = otherDuplicatesBytes
-            )
-
-            val insights = mutableListOf<StorageInsight>()
-            if (dupVideosBytes > 0) {
-                insights.add(
-                    StorageInsight(
-                        id = "dup_videos",
-                        title = "${FormattingUtils.formatBytes(dupVideosBytes)} in duplicate videos",
-                        description = "Exact byte-matched duplicate videos found across your library.",
-                        potentialSavingsBytes = dupVideosBytes,
-                        iconType = InsightIconType.DUPLICATE_FOUND
-                    )
-                )
-            }
-            if (oldDownloadsBytes > 0) {
-                insights.add(
-                    StorageInsight(
-                        id = "old_downloads",
-                        title = "${FormattingUtils.formatBytes(oldDownloadsBytes)} in old downloads",
-                        description = "Downloaded files older than 90 days stored on device.",
-                        potentialSavingsBytes = oldDownloadsBytes,
-                        iconType = InsightIconType.DOWNLOADS_WARNING
-                    )
-                )
-            }
-            if (screenshotsBytes > 0) {
-                insights.add(
-                    StorageInsight(
-                        id = "screenshots",
-                        title = "${FormattingUtils.formatBytes(screenshotsBytes)} in screenshots",
-                        description = "Accumulated device screenshots ready for quick review.",
-                        potentialSavingsBytes = screenshotsBytes,
-                        iconType = InsightIconType.SCREENSHOTS_ALERT
-                    )
-                )
-            }
-
-            val accountedBytes = allEntities.sumOf { it.sizeBytes }
-            val unaccountedBytes = (usedBytes - accountedBytes).coerceAtLeast(0L)
-
-            val explanations = listOf(
-                StorageExplanation(
-                    title = "Private App Data & Sandboxes",
-                    description = "Android isolates each application's internal data, databases, and saved state from third-party inspection.",
-                    estimatedBytes = null,
-                    confidence = ConfidenceLevel.HIGH_CONFIDENCE,
-                    isDirectlyAccessible = false
-                ),
-                StorageExplanation(
-                    title = "System Storage & Android OS",
-                    description = "Android operating system image, boot partitions, and core system libraries.",
-                    estimatedBytes = null,
-                    confidence = ConfidenceLevel.HIGH_CONFIDENCE,
-                    isDirectlyAccessible = false
-                ),
-                StorageExplanation(
-                    title = "Application Caches & Temp Files",
-                    description = "Cached data managed dynamically by Android and cleared as storage demands dictate.",
-                    estimatedBytes = null,
-                    confidence = ConfidenceLevel.ESTIMATED,
-                    isDirectlyAccessible = false
-                ),
-                StorageExplanation(
-                    title = "System Trash & Deleted Items",
-                    description = "Recently deleted files retained by Android MediaStore for 30 days before permanent deletion.",
-                    estimatedBytes = null,
-                    confidence = ConfidenceLevel.HIGH_CONFIDENCE,
-                    isDirectlyAccessible = false
-                )
-            )
-
-            val reconciliation = StorageReconciliation(
-                systemReportedUsedBytes = usedBytes,
-                accountedBytes = accountedBytes,
-                unaccountedBytes = unaccountedBytes,
-                confidence = ConfidenceLevel.EXACT,
-                explanations = explanations
-            )
-
-            val downloadsSize = allEntities.filter { it.isDownload }.sumOf { it.sizeBytes }
-            val documentsSize = allEntities.filter { it.category == StorageCategory.DOCUMENTS.name }.sumOf { it.sizeBytes }
-            val messagingSize = allEntities.filter { it.sourceApp != null }.sumOf { it.sizeBytes }
-            val audioSize = allEntities.filter { it.category == StorageCategory.AUDIO.name }.sumOf { it.sizeBytes }
-            val publicOtherSize = allEntities.filter { it.category == StorageCategory.OTHER.name }.sumOf { it.sizeBytes }
-
-            val explainableItems = listOf(
-                ExplainableStorageItem("Temporary & other files", publicOtherSize, ConfidenceLevel.EXACT, "Files detected in public device storage without standard media type"),
-                ExplainableStorageItem("Messaging media", messagingSize, ConfidenceLevel.EXACT, "Accessible media from WhatsApp and Telegram"),
-                ExplainableStorageItem("Downloads folder", downloadsSize, ConfidenceLevel.EXACT, "Files residing in the public Downloads folder"),
-                ExplainableStorageItem("Documents & text", documentsSize, ConfidenceLevel.EXACT, "PDFs, office documents, and eBooks"),
-                ExplainableStorageItem("Audio & recordings", audioSize, ConfidenceLevel.EXACT, "Audio tracks, podcasts, and recordings")
-            ).filter { it.sizeBytes > 0 }
-
-            val otherBreakdown = OtherStorageBreakdown(
-                totalUnaccountedBytes = unaccountedBytes + publicOtherSize,
-                explainableBytes = publicOtherSize,
-                unavailableBytes = unaccountedBytes,
-                explainableItems = explainableItems,
-                inaccessibleSources = explanations
-            )
-
-            val waFiles = allEntities.filter { it.sourceApp == "WhatsApp" }
-            val tgFiles = allEntities.filter { it.sourceApp == "Telegram" }
-
-            val waDomainFiles = waFiles.map { it.toDomain() }
-            val waGreetings = waDomainFiles.filter { it.isGreetingOrGoodMorning }
-            val waSentFiles = waDomainFiles.filter { it.isForwarded }
-            val waSentBytes = waSentFiles.sumOf { it.sizeBytes }
-            val waExactDupFiles = waDomainFiles.filter { it.isDuplicate }
-            val waExactDupBytes = waExactDupFiles.sumOf { it.sizeBytes }
-
-            val waSubcategories = listOf(
-                MessagingSubcategoryBreakdown(MessagingMediaType.SENT_AND_RECEIVED, waSentBytes, waSentFiles.size),
-                MessagingSubcategoryBreakdown(MessagingMediaType.EXACT_MATCHES, waExactDupBytes, waExactDupFiles.size),
-                MessagingSubcategoryBreakdown(MessagingMediaType.GREETINGS, waGreetings.sumOf { it.sizeBytes }, waGreetings.size),
-                MessagingSubcategoryBreakdown(MessagingMediaType.VIDEOS, waFiles.filter { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.IMAGES, waFiles.filter { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.DOCUMENTS, waFiles.filter { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.AUDIO, waFiles.filter { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") })
-            )
-
-            val tgDomainFiles = tgFiles.map { it.toDomain() }
-            val tgGreetings = tgDomainFiles.filter { it.isGreetingOrGoodMorning }
-            val tgSubcategories = listOf(
-                MessagingSubcategoryBreakdown(MessagingMediaType.EXACT_MATCHES, tgFiles.filter { it.sha256Hash != null }.sumOf { it.sizeBytes }, tgFiles.count { it.sha256Hash != null }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.GREETINGS, tgGreetings.sumOf { it.sizeBytes }, tgGreetings.size),
-                MessagingSubcategoryBreakdown(MessagingMediaType.VIDEOS, tgFiles.filter { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.IMAGES, tgFiles.filter { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.DOCUMENTS, tgFiles.filter { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }),
-                MessagingSubcategoryBreakdown(MessagingMediaType.AUDIO, tgFiles.filter { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") })
-            )
-
-            val waApp = MessagingAppStorage(
-                appName = "WhatsApp",
-                totalSizeBytes = waFiles.sumOf { it.sizeBytes },
-                fileCount = waFiles.size,
-                subcategories = waSubcategories,
-                accessibleScopeNote = "Scanned from accessible MediaStore public collections."
-            )
-
-            val tgApp = MessagingAppStorage(
-                appName = "Telegram",
-                totalSizeBytes = tgFiles.sumOf { it.sizeBytes },
-                fileCount = tgFiles.size,
-                subcategories = tgSubcategories,
-                accessibleScopeNote = "Some storage may be inaccessible if saved in app-private sandboxes."
-            )
-
-            val messagingReport = MessagingStorageReport(
-                totalMessagingBytes = waApp.totalSizeBytes + tgApp.totalSizeBytes,
-                totalGrowth14DaysBytes = 0L,
-                apps = listOf(waApp, tgApp)
-            )
-
-            StorageOverview(
-                totalDeviceSizeBytes = totalBytes,
-                usedDeviceSizeBytes = usedBytes,
-                freeDeviceSizeBytes = freeBytes,
-                usedPercentage = usedPercent,
-                recoverableSummary = recoverableSummary,
-                categoryBreakdowns = breakdowns,
-                insights = insights,
-                reconciliation = reconciliation,
-                otherBreakdown = otherBreakdown,
-                messagingSummary = messagingReport
-            )
-        }
-    }
+    override fun getStorageOverviewFlow(): Flow<StorageOverview> = overviewSharedFlow
 
     override fun getOtherStorageFlow(): Flow<OtherStorageBreakdown> {
-        return getStorageOverviewFlow().map { it.otherBreakdown ?: OtherStorageBreakdown(0L, 0L, 0L, emptyList(), emptyList()) }
+        return overviewSharedFlow.map { it.otherBreakdown ?: OtherStorageBreakdown(0L, 0L, 0L, emptyList(), emptyList()) }
     }
 
     override fun getMessagingReportFlow(): Flow<MessagingStorageReport> {
-        return getStorageOverviewFlow().map { it.messagingSummary ?: MessagingStorageReport(0L, 0L, emptyList()) }
+        return overviewSharedFlow.map { it.messagingSummary ?: MessagingStorageReport(0L, 0L, emptyList()) }
     }
 
     override fun getReconciliationFlow(): Flow<StorageReconciliation> {
-        return getStorageOverviewFlow().map { it.reconciliation ?: StorageReconciliation(0L, 0L, 0L, ConfidenceLevel.UNAVAILABLE, emptyList()) }
+        return overviewSharedFlow.map { it.reconciliation ?: StorageReconciliation(0L, 0L, 0L, ConfidenceLevel.UNAVAILABLE, emptyList()) }
     }
+
+    private fun buildOverview(allEntities: List<FileMetadataEntity>): StorageOverview {
+        val stat = StatFs(Environment.getDataDirectory().path)
+        val totalBytes = stat.blockCountLong * stat.blockSizeLong
+        val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
+        val usedBytes = (totalBytes - freeBytes).coerceAtLeast(0L)
+        val usedPercent = if (totalBytes > 0) ((usedBytes.toDouble() / totalBytes.toDouble()) * 100).toInt() else 0
+
+        val categoryMap = allEntities.groupBy { it.category }
+        val breakdowns = StorageCategory.entries.map { cat ->
+            val files = categoryMap[cat.name] ?: emptyList()
+            StorageCategoryBreakdown(
+                category = cat,
+                totalSizeBytes = files.sumOf { it.sizeBytes },
+                fileCount = files.size
+            )
+        }
+
+        // Deterministic real-time duplicate calculation:
+        // Group files by SHA-256 hash and strictly count redundant copies only when 2 or more files have matching hashes.
+        val exactDupGroups = allEntities
+            .filter { !it.sha256Hash.isNullOrEmpty() }
+            .groupBy { it.sha256Hash!! }
+            .filter { it.value.size > 1 }
+
+        var dupVideosBytes = 0L
+        var dupPhotosBytes = 0L
+        var otherDuplicatesBytes = 0L
+
+        exactDupGroups.values.forEach { group ->
+            val sorted = group.sortedByDescending { it.modifiedTimeMs }
+            val redundantCopies = sorted.drop(1)
+            redundantCopies.forEach { dupFile ->
+                when (dupFile.category) {
+                    StorageCategory.VIDEOS.name -> dupVideosBytes += dupFile.sizeBytes
+                    StorageCategory.PHOTOS.name -> dupPhotosBytes += dupFile.sizeBytes
+                    else -> otherDuplicatesBytes += dupFile.sizeBytes
+                }
+            }
+        }
+
+        val ninetyDaysAgo = System.currentTimeMillis() - (90L * 24 * 60 * 60 * 1000)
+        val oldDownloadsBytes = allEntities.filter { it.isDownload && it.modifiedTimeMs < ninetyDaysAgo }.sumOf { it.sizeBytes }
+        val screenshotsBytes = allEntities.filter { it.isScreenshot }.sumOf { it.sizeBytes }
+
+        val totalRecoverable = dupVideosBytes + dupPhotosBytes + otherDuplicatesBytes + oldDownloadsBytes + screenshotsBytes
+
+        val recoverableSummary = RecoverableSpace(
+            totalRecoverableBytes = totalRecoverable,
+            duplicateVideosBytes = dupVideosBytes,
+            duplicatePhotosBytes = dupPhotosBytes,
+            oldDownloadsBytes = oldDownloadsBytes,
+            screenshotsBytes = screenshotsBytes,
+            otherRecoverableBytes = otherDuplicatesBytes
+        )
+
+        val insights = mutableListOf<StorageInsight>()
+        if (dupVideosBytes > 0) {
+            insights.add(
+                StorageInsight(
+                    id = "dup_videos",
+                    title = "${FormattingUtils.formatBytes(dupVideosBytes)} in duplicate videos",
+                    description = "Exact byte-matched duplicate videos found across your library.",
+                    potentialSavingsBytes = dupVideosBytes,
+                    iconType = InsightIconType.DUPLICATE_FOUND
+                )
+            )
+        }
+        if (oldDownloadsBytes > 0) {
+            insights.add(
+                StorageInsight(
+                    id = "old_downloads",
+                    title = "${FormattingUtils.formatBytes(oldDownloadsBytes)} in old downloads",
+                    description = "Downloaded files older than 90 days stored on device.",
+                    potentialSavingsBytes = oldDownloadsBytes,
+                    iconType = InsightIconType.DOWNLOADS_WARNING
+                )
+            )
+        }
+        if (screenshotsBytes > 0) {
+            insights.add(
+                StorageInsight(
+                    id = "screenshots",
+                    title = "${FormattingUtils.formatBytes(screenshotsBytes)} in screenshots",
+                    description = "Accumulated device screenshots ready for quick review.",
+                    potentialSavingsBytes = screenshotsBytes,
+                    iconType = InsightIconType.SCREENSHOTS_ALERT
+                )
+            )
+        }
+
+        val accountedBytes = allEntities.sumOf { it.sizeBytes }
+        val unaccountedBytes = (usedBytes - accountedBytes).coerceAtLeast(0L)
+
+        val explanations = listOf(
+            StorageExplanation(
+                title = "Private App Data & Sandboxes",
+                description = "Android isolates each application's internal data, databases, and saved state from third-party inspection.",
+                estimatedBytes = null,
+                confidence = ConfidenceLevel.HIGH_CONFIDENCE,
+                isDirectlyAccessible = false
+            ),
+            StorageExplanation(
+                title = "System Storage & Android OS",
+                description = "Android operating system image, boot partitions, and core system libraries.",
+                estimatedBytes = null,
+                confidence = ConfidenceLevel.HIGH_CONFIDENCE,
+                isDirectlyAccessible = false
+            ),
+            StorageExplanation(
+                title = "Application Caches & Temp Files",
+                description = "Cached data managed dynamically by Android and cleared as storage demands dictate.",
+                estimatedBytes = null,
+                confidence = ConfidenceLevel.ESTIMATED,
+                isDirectlyAccessible = false
+            ),
+            StorageExplanation(
+                title = "System Trash & Deleted Items",
+                description = "Recently deleted files retained by Android MediaStore for 30 days before permanent deletion.",
+                estimatedBytes = null,
+                confidence = ConfidenceLevel.HIGH_CONFIDENCE,
+                isDirectlyAccessible = false
+            )
+        )
+
+        val reconciliation = StorageReconciliation(
+            systemReportedUsedBytes = usedBytes,
+            accountedBytes = accountedBytes,
+            unaccountedBytes = unaccountedBytes,
+            confidence = ConfidenceLevel.EXACT,
+            explanations = explanations
+        )
+
+        val downloadsSize = allEntities.filter { it.isDownload }.sumOf { it.sizeBytes }
+        val documentsSize = allEntities.filter { it.category == StorageCategory.DOCUMENTS.name }.sumOf { it.sizeBytes }
+        val messagingSize = allEntities.filter { it.sourceApp != null }.sumOf { it.sizeBytes }
+        val audioSize = allEntities.filter { it.category == StorageCategory.AUDIO.name }.sumOf { it.sizeBytes }
+        val publicOtherSize = allEntities.filter { it.category == StorageCategory.OTHER.name }.sumOf { it.sizeBytes }
+
+        val explainableItems = listOf(
+            ExplainableStorageItem("Temporary & other files", publicOtherSize, ConfidenceLevel.EXACT, "Files detected in public device storage without standard media type"),
+            ExplainableStorageItem("Messaging media", messagingSize, ConfidenceLevel.EXACT, "Accessible media from WhatsApp and Telegram"),
+            ExplainableStorageItem("Downloads folder", downloadsSize, ConfidenceLevel.EXACT, "Files residing in the public Downloads folder"),
+            ExplainableStorageItem("Documents & text", documentsSize, ConfidenceLevel.EXACT, "PDFs, office documents, and eBooks"),
+            ExplainableStorageItem("Audio & recordings", audioSize, ConfidenceLevel.EXACT, "Audio tracks, podcasts, and recordings")
+        ).filter { it.sizeBytes > 0 }
+
+        val otherBreakdown = OtherStorageBreakdown(
+            totalUnaccountedBytes = unaccountedBytes + publicOtherSize,
+            explainableBytes = publicOtherSize,
+            unavailableBytes = unaccountedBytes,
+            explainableItems = explainableItems,
+            inaccessibleSources = explanations
+        )
+
+        val waFiles = allEntities.filter { it.sourceApp == "WhatsApp" }
+        val tgFiles = allEntities.filter { it.sourceApp == "Telegram" }
+
+        val waDomainFiles = waFiles.map { it.toDomain() }
+        val waGreetings = waDomainFiles.filter { it.isGreetingOrGoodMorning }
+        val waSentFiles = waDomainFiles.filter { it.isForwarded }
+        val waSentBytes = waSentFiles.sumOf { it.sizeBytes }
+        val waExactDupFiles = waDomainFiles.filter { it.isDuplicate }
+        val waExactDupBytes = waExactDupFiles.sumOf { it.sizeBytes }
+
+        val waSubcategories = listOf(
+            MessagingSubcategoryBreakdown(MessagingMediaType.SENT_AND_RECEIVED, waSentBytes, waSentFiles.size),
+            MessagingSubcategoryBreakdown(MessagingMediaType.EXACT_MATCHES, waExactDupBytes, waExactDupFiles.size),
+            MessagingSubcategoryBreakdown(MessagingMediaType.GREETINGS, waGreetings.sumOf { it.sizeBytes }, waGreetings.size),
+            MessagingSubcategoryBreakdown(MessagingMediaType.VIDEOS, waFiles.filter { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.IMAGES, waFiles.filter { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.DOCUMENTS, waFiles.filter { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.AUDIO, waFiles.filter { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") })
+        )
+
+        val tgDomainFiles = tgFiles.map { it.toDomain() }
+        val tgGreetings = tgDomainFiles.filter { it.isGreetingOrGoodMorning }
+        val tgSubcategories = listOf(
+            MessagingSubcategoryBreakdown(MessagingMediaType.EXACT_MATCHES, tgFiles.filter { it.sha256Hash != null }.sumOf { it.sizeBytes }, tgFiles.count { it.sha256Hash != null }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.GREETINGS, tgGreetings.sumOf { it.sizeBytes }, tgGreetings.size),
+            MessagingSubcategoryBreakdown(MessagingMediaType.VIDEOS, tgFiles.filter { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.IMAGES, tgFiles.filter { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.DOCUMENTS, tgFiles.filter { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }),
+            MessagingSubcategoryBreakdown(MessagingMediaType.AUDIO, tgFiles.filter { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") })
+        )
+
+        val waApp = MessagingAppStorage(
+            appName = "WhatsApp",
+            totalSizeBytes = waFiles.sumOf { it.sizeBytes },
+            fileCount = waFiles.size,
+            subcategories = waSubcategories,
+            accessibleScopeNote = "Scanned from accessible MediaStore public collections."
+        )
+
+        val tgApp = MessagingAppStorage(
+            appName = "Telegram",
+            totalSizeBytes = tgFiles.sumOf { it.sizeBytes },
+            fileCount = tgFiles.size,
+            subcategories = tgSubcategories,
+            accessibleScopeNote = "Some storage may be inaccessible if saved in app-private sandboxes."
+        )
+
+        val messagingReport = MessagingStorageReport(
+            totalMessagingBytes = waApp.totalSizeBytes + tgApp.totalSizeBytes,
+            totalGrowth14DaysBytes = 0L,
+            apps = listOf(waApp, tgApp)
+        )
+
+        return StorageOverview(
+            totalDeviceSizeBytes = totalBytes,
+            usedDeviceSizeBytes = usedBytes,
+            freeDeviceSizeBytes = freeBytes,
+            usedPercentage = usedPercent,
+            recoverableSummary = recoverableSummary,
+            categoryBreakdowns = breakdowns,
+            insights = insights,
+            reconciliation = reconciliation,
+            otherBreakdown = otherBreakdown,
+            messagingSummary = messagingReport
+        )
+    }
+
 
     override fun getFilesByCategoryFlow(category: StorageCategory): Flow<List<FileItem>> {
         return fileDao.getFilesByCategoryFlow(category.name).map { list -> list.map { it.toDomain() } }

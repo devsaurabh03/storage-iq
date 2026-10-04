@@ -87,7 +87,18 @@ interface FileMetadataDao {
 
     @Query("UPDATE file_metadata SET isOptimized = 0, sizeBytes = :restoredSize, compressedFilePath = NULL, compressionAlgorithm = NULL WHERE id = :id")
     suspend fun updateRestoredState(id: Long, restoredSize: Long)
+
+    @Query("SELECT id, path FROM file_metadata")
+    suspend fun getAllIdPathPairs(): List<IdPathTuple>
+
+    @Query("SELECT SUM(sizeBytes) FROM file_metadata WHERE category = :category")
+    fun getTotalSizeByCategoryFlow(category: String): Flow<Long?>
 }
+
+data class IdPathTuple(
+    val id: Long,
+    val path: String
+)
 
 data class DuplicateSizeCandidate(
     val sizeBytes: Long,

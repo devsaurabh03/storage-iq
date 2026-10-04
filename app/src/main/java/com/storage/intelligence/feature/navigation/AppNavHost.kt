@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -128,8 +129,6 @@ fun AppNavHost(
     )
 
     val showBottomBar = currentRoute in listOf(Routes.DASHBOARD, Routes.PERFORMANCE, Routes.CLEANUP, Routes.ME, Routes.VIDEO_HOME)
-
-    val sharedVideoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
 
     Scaffold(
         containerColor = SurfaceOled,
@@ -334,6 +333,7 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_HOME) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val legacyVideos = uiState.videos.filter {
                     it.codecName == "H.264" || it.codecName == "MPEG-4" ||
@@ -361,6 +361,7 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_LIBRARY) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.VideoLibraryScreen(
@@ -388,6 +389,7 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_ACTIVITY) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.VideoActivityScreen(
@@ -401,6 +403,7 @@ fun AppNavHost(
             }
 
             composable(Routes.VIDEO_DETAIL) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val video = uiState.selectedVideo
                 val plan = uiState.selectedVideoPlan
@@ -437,6 +440,7 @@ fun AppNavHost(
             }
 
             composable(Routes.PERFORMANCE_LAB) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val profile = uiState.deviceProfile ?: com.storage.intelligence.feature.video.codec.CodecCapabilityManager.detectCapabilities()
 
@@ -456,6 +460,7 @@ fun AppNavHost(
             }
 
             composable(Routes.BENCHMARK_RESULT) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
                 val result = uiState.lastBenchmarkResult ?: com.storage.intelligence.feature.video.benchmark.CodecBenchmarkMetrics(
                     codecName = "AV1",
@@ -481,6 +486,7 @@ fun AppNavHost(
 
 
             composable(Routes.CODEC_COMPARISON) {
+                val sharedVideoViewModel = getSharedVideoViewModel(navController)
                 val uiState by sharedVideoViewModel.uiState.collectAsState()
 
                 com.storage.intelligence.feature.video.ui.lab.CodecComparisonScreen(
@@ -598,3 +604,21 @@ fun AppNavHost(
         }
     }
 }
+
+@Composable
+private fun getSharedVideoViewModel(navController: NavHostController): com.storage.intelligence.feature.video.presentation.VideoViewModel {
+    val currentEntry = navController.currentBackStackEntry
+    val videoHomeEntry = remember(currentEntry) {
+        try {
+            navController.getBackStackEntry(Routes.VIDEO_HOME)
+        } catch (_: Exception) {
+            null
+        }
+    }
+    return if (videoHomeEntry != null) {
+        hiltViewModel(videoHomeEntry)
+    } else {
+        hiltViewModel()
+    }
+}
+
