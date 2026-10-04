@@ -207,6 +207,17 @@ fun DashboardScreen(
                         onQuickCleanClick = onNavigateToReview
                     )
 
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // ── OFFICIAL STORAGEIQ RAM INTELLIGENCE TILE ──────────────────────────
+                    com.storage.intelligence.feature.ram.ui.RamDashboardTile(
+                        ramUsedBytes = telemetry.ramUsedBytes,
+                        ramTotalBytes = telemetry.ramTotalBytes,
+                        pressure = telemetry.ramPressure,
+                        isLoading = telemetry.ramTotalBytes <= 0L,
+                        onClick = onNavigateToPerformance
+                    )
+
                     Spacer(modifier = Modifier.height(24.dp))
 
                     // Section Header: Flagship Autonomous Engines

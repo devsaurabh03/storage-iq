@@ -20,13 +20,16 @@ import javax.inject.Inject
 import com.storage.intelligence.feature.performance.provider.BatteryInfoProvider
 import com.storage.intelligence.feature.performance.provider.RamInfoProvider
 
+import com.storage.intelligence.feature.ram.model.MemoryPressure
+
 data class LiveSystemTelemetry(
     val batteryPercent: Int = 0,
     val tempCelsius: Double = 0.0,
     val isCharging: Boolean = false,
     val ramUsedBytes: Long = 0L,
     val ramTotalBytes: Long = 0L,
-    val ramUsedPercent: Int = 0
+    val ramUsedPercent: Int = 0,
+    val ramPressure: MemoryPressure = MemoryPressure.LOW
 )
 
 data class DashboardUiState(
@@ -64,6 +67,13 @@ class DashboardViewModel @Inject constructor(
             val usedPercent = if (ram != null && ram.totalBytes > 0L) {
                 ((ram.usedBytes.toDouble() / ram.totalBytes) * 100).toInt()
             } else 0
+            val pressure = when {
+                ram == null -> MemoryPressure.LOW
+                ram.isLowMemory || ram.availableBytes <= ram.thresholdBytes || usedPercent >= 92 -> MemoryPressure.CRITICAL
+                ram.availableBytes <= (ram.thresholdBytes * 1.5).toLong() || usedPercent >= 83 -> MemoryPressure.HIGH
+                ram.availableBytes <= (ram.thresholdBytes * 2.2).toLong() || usedPercent >= 70 -> MemoryPressure.MODERATE
+                else -> MemoryPressure.LOW
+            }
             emit(
                 LiveSystemTelemetry(
                     batteryPercent = battery?.levelPercent ?: 0,
@@ -71,7 +81,8 @@ class DashboardViewModel @Inject constructor(
                     isCharging = battery?.isCharging ?: false,
                     ramUsedBytes = ram?.usedBytes ?: 0L,
                     ramTotalBytes = ram?.totalBytes ?: 0L,
-                    ramUsedPercent = usedPercent
+                    ramUsedPercent = usedPercent,
+                    ramPressure = pressure
                 )
             )
             kotlinx.coroutines.delay(2000L)

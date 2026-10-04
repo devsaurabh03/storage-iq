@@ -273,7 +273,7 @@ fun AppNavHost(
             }
 
             composable(Routes.RAM_ANALYSIS) {
-                com.storage.intelligence.feature.performance.ui.RamAnalysisScreen(
+                com.storage.intelligence.feature.ram.ui.RamIntelligenceScreen(
                     viewModel = hiltViewModel(),
                     onNavigateBack = { navController.popBackStack() }
                 )
