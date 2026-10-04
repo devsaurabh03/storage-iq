@@ -20,6 +20,7 @@ import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.core.common.Result
 import com.storage.intelligence.core.ui.components.FileCard
 import com.storage.intelligence.core.ui.components.SafeDeleteDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -113,7 +114,13 @@ fun DownloadsScreen(
 
             Box(modifier = Modifier.weight(1f)) {
                 when (val state = downloadsState) {
-                    is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    is Result.Loading -> {
+                        WorldFactsLoadingView(
+                            statusTitle = "Scanning Downloads…",
+                            statusSubtitle = "Checking stale downloads and accumulated files",
+                            accentColor = EmeraldPrimary
+                        )
+                    }
                     is Result.Error -> Text("Error loading downloads", modifier = Modifier.align(Alignment.Center))
                     is Result.Success -> {
                         val files = state.data

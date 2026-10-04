@@ -218,6 +218,120 @@ class VideoViewModel @Inject constructor(
         runOptimizationLifecycle(jobId, plan, startPercent = 5)
     }
 
+    fun startBatchOptimization(videos: List<VideoCharacteristics>) {
+        if (videos.isEmpty()) return
+        val profile = _uiState.value.deviceProfile ?: CodecCapabilityManager.detectCapabilities()
+        val totalCount = videos.size
+
+        val batchJobId = System.currentTimeMillis().toString()
+        val plans = videos.map { VideoOptimizationEngine.generatePlan(it, profile, OptimizationMode.BALANCED) }
+
+        val initialJob = OptimizationJobState(
+            id = batchJobId,
+            title = "Batch Optimization ($totalCount videos)",
+            currentItemIndex = 1,
+            totalItems = totalCount,
+            progressPercent = 2,
+            statusText = "Preparing batch optimization for $totalCount videos...",
+            estimatedTimeRemainingText = "Calculating...",
+            state = JobStatus.RUNNING,
+            savedBytes = 0L
+        )
+
+        _uiState.update { current ->
+            current.copy(activeJobs = current.activeJobs + initialJob)
+        }
+
+        val batchJobCoroutine = viewModelScope.launch(Dispatchers.Default) {
+            var totalSavedBytes = 0L
+            for ((index, plan) in plans.withIndex()) {
+                val currentIndex = index + 1
+                val video = plan.source
+
+                updateJob(batchJobId) {
+                    it.copy(
+                        currentItemIndex = currentIndex,
+                        statusText = "[$currentIndex/$totalCount] Optimizing '${video.name}'...",
+                        progressPercent = ((index.toFloat() / totalCount) * 100).toInt().coerceIn(2, 98)
+                    )
+                }
+
+                try {
+                    val cleanBaseName = plan.source.name.substringBeforeLast('.')
+                    val tempOutputFile = File(context.cacheDir, "opt_batch_${System.currentTimeMillis()}_${cleanBaseName}.mp4")
+
+                    val isProcessed = withContext(Dispatchers.IO) {
+                        processVideoPipeline(plan, tempOutputFile) { pct, _ ->
+                            val overallPct = (((index.toFloat() + (pct / 100f)) / totalCount) * 100).toInt().coerceIn(2, 98)
+                            updateJob(batchJobId) {
+                                it.copy(
+                                    progressPercent = overallPct,
+                                    statusText = "[$currentIndex/$totalCount] Optimizing '${video.name}' ($pct%)...",
+                                    estimatedTimeRemainingText = "${(totalCount - index) * 6}s"
+                                )
+                            }
+                        }
+                    }
+
+                    if (isProcessed && tempOutputFile.exists() && tempOutputFile.length() > 0L) {
+                        trashOriginalVideo(plan.source)
+
+                        val targetFileName = "${cleanBaseName}.mp4"
+                        var finalPublicPath = ""
+                        try {
+                            val moviesDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES)
+                            moviesDir.mkdirs()
+                            val publicFile = File(moviesDir, targetFileName)
+                            tempOutputFile.copyTo(publicFile, overwrite = true)
+                            finalPublicPath = publicFile.absolutePath
+                        } catch (_: Exception) {}
+
+                        if (finalPublicPath.isEmpty()) {
+                            val fallback = File(context.filesDir, targetFileName)
+                            tempOutputFile.copyTo(fallback, overwrite = true)
+                            finalPublicPath = fallback.absolutePath
+                        }
+
+                        if (finalPublicPath.isNotEmpty() && !finalPublicPath.startsWith("content:")) {
+                            try {
+                                android.media.MediaScannerConnection.scanFile(context, arrayOf(finalPublicPath), arrayOf("video/mp4"), null)
+                            } catch (_: Exception) {}
+                        }
+
+                        val originalSizeBytes = plan.source.sizeBytes
+                        val finalFile = File(finalPublicPath)
+                        val finalSizeBytes = if (finalFile.exists()) finalFile.length() else plan.estimatedOutputSizeBytes
+                        val saved = (originalSizeBytes - finalSizeBytes).coerceAtLeast(0L)
+                        totalSavedBytes += if (saved > 0) saved else plan.estimatedSavingsBytes
+
+                        updateJob(batchJobId) {
+                            it.copy(
+                                savedBytes = totalSavedBytes,
+                                outputPath = finalPublicPath
+                            )
+                        }
+
+                        try { if (tempOutputFile.exists()) tempOutputFile.delete() } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    com.storage.intelligence.core.logging.AppLogger.e("VideoOptimizer", "Batch video ${video.name} failed: ${e.message}", e)
+                }
+            }
+
+            updateJob(batchJobId) {
+                it.copy(
+                    progressPercent = 100,
+                    statusText = "Batch completed! Saved ${com.storage.intelligence.core.common.FormattingUtils.formatBytes(totalSavedBytes)}.",
+                    estimatedTimeRemainingText = "Complete",
+                    state = JobStatus.COMPLETED,
+                    savedBytes = totalSavedBytes
+                )
+            }
+            loadData()
+        }
+        jobTasks[batchJobId] = batchJobCoroutine
+    }
+
     fun pauseJob(id: String) {
         jobTasks[id]?.cancel()
         jobTasks.remove(id)

@@ -21,6 +21,7 @@ import com.storage.intelligence.core.ui.components.SafeDeleteDialog
 import com.storage.intelligence.core.ui.components.SimilarityGroupCard
 import com.storage.intelligence.core.ui.preview.FilePreviewController
 import com.storage.intelligence.core.ui.preview.FilePreviewDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,14 +121,11 @@ fun SimilarPhotosScreen(
         ) {
             when (val state = groupsState) {
                 is Result.Loading -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator(color = EmeraldPrimary)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Detecting visually similar photos...", style = MaterialTheme.typography.bodyMedium)
-                    }
+                    WorldFactsLoadingView(
+                        statusTitle = "Detecting Similar Photos…",
+                        statusSubtitle = "Analyzing perceptual visual similarity and burst photos",
+                        accentColor = EmeraldPrimary
+                    )
                 }
                 is Result.Error -> {
                     Text("Error loading similar photos", modifier = Modifier.align(Alignment.Center))

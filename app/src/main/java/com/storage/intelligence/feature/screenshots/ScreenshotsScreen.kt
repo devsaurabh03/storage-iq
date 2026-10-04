@@ -19,6 +19,7 @@ import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.core.common.Result
 import com.storage.intelligence.core.ui.components.FileCard
 import com.storage.intelligence.core.ui.components.SafeDeleteDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,7 +93,13 @@ fun ScreenshotsScreen(
                 .padding(paddingValues)
         ) {
             when (val state = screenshotsState) {
-                is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                is Result.Loading -> {
+                    WorldFactsLoadingView(
+                        statusTitle = "Finding Device Screenshots…",
+                        statusSubtitle = "Cataloging captured screenshots and screen recordings",
+                        accentColor = EmeraldPrimary
+                    )
+                }
                 is Result.Error -> Text("Error loading screenshots", modifier = Modifier.align(Alignment.Center))
                 is Result.Success -> {
                     val files = state.data

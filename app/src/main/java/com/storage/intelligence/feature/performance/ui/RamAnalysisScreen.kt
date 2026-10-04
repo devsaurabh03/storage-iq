@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.storage.intelligence.core.common.FormattingUtils
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.feature.performance.model.RamPressure
 
@@ -54,7 +55,11 @@ fun RamAnalysisScreen(
                 .padding(paddingValues)
         ) {
             if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                WorldFactsLoadingView(
+                    statusTitle = "Analyzing Active Memory…",
+                    statusSubtitle = "Calculating process resident set sizes and memory footprint",
+                    accentColor = EmeraldPrimary
+                )
             } else {
                 val snapshot = uiState.snapshot
                 val ramInfo = snapshot?.ramInfo

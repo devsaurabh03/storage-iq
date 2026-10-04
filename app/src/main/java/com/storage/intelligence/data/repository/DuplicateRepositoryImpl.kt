@@ -124,7 +124,7 @@ class DuplicateRepositoryImpl @Inject constructor(
             val updated = mutableListOf<FileMetadataEntity>()
             for (fileEntity in matchingFiles) {
                 if (fileEntity.sha256Hash == null) {
-                    val hash = fileHasher.computeSha256(File(fileEntity.path))
+                    val hash = fileHasher.computeSha256(File(fileEntity.path), fileEntity.id)
                     if (hash != null) {
                         updated.add(fileEntity.copy(sha256Hash = hash))
                     }

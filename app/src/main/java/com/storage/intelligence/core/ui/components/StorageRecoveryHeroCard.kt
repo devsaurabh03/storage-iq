@@ -17,10 +17,14 @@ import androidx.compose.ui.unit.dp
 import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+
 data class RecoveryItemBreakdown(
     val title: String,
     val sizeBytes: Long,
-    val color: Color
+    val color: Color,
+    val onClick: (() -> Unit)? = null
 )
 
 @Composable
@@ -81,7 +85,13 @@ fun StorageRecoveryHeroCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .clip(RoundedCornerShape(8.dp))
+                        .then(
+                            if (item.onClick != null) {
+                                Modifier.clickable(onClick = item.onClick)
+                            } else Modifier
+                        )
+                        .padding(vertical = 5.dp, horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -99,12 +109,23 @@ fun StorageRecoveryHeroCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    Text(
-                        text = FormattingUtils.formatBytes(item.sizeBytes),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = FormattingUtils.formatBytes(item.sizeBytes),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (item.onClick != null) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Review ${item.title}",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
                 }
             }
 

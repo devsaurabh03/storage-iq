@@ -25,6 +25,7 @@ import com.storage.intelligence.core.ui.components.EmptyStateCard
 import com.storage.intelligence.core.ui.components.SafeDeleteDialog
 import com.storage.intelligence.core.ui.preview.FilePreviewController
 import com.storage.intelligence.core.ui.preview.FilePreviewDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.core.ui.theme.WarningAmber
 import com.storage.intelligence.domain.model.FileItem
@@ -135,14 +136,11 @@ fun DuplicatesScreen(
         ) {
             when (val state = groupsState) {
                 is Result.Loading -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator(color = EmeraldPrimary)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Finding duplicate files...", style = MaterialTheme.typography.bodyMedium)
-                    }
+                    WorldFactsLoadingView(
+                        statusTitle = "Finding Duplicate Files…",
+                        statusSubtitle = "Comparing cryptographic hashes across files",
+                        accentColor = EmeraldPrimary
+                    )
                 }
                 is Result.Error -> {
                     Text("Error loading duplicates", modifier = Modifier.align(Alignment.Center))

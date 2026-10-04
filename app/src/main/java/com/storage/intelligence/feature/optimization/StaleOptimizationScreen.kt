@@ -29,6 +29,7 @@ import com.storage.intelligence.core.ui.components.SafeDeleteDialog
 import com.storage.intelligence.core.ui.components.SectionHeader
 import com.storage.intelligence.core.ui.preview.FilePreviewController
 import com.storage.intelligence.core.ui.preview.FilePreviewDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.core.ui.theme.WarningAmber
 import com.storage.intelligence.domain.model.FileItem
@@ -169,7 +170,11 @@ fun StaleOptimizationScreen(
         ) {
             when (val state = staleState) {
                 is Result.Loading -> {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = EmeraldPrimary)
+                    WorldFactsLoadingView(
+                        statusTitle = "Detecting Stale Files…",
+                        statusSubtitle = "Analyzing file access times and unreferenced media",
+                        accentColor = EmeraldPrimary
+                    )
                 }
                 is Result.Error -> {
                     Text("Error loading stale files", modifier = Modifier.align(Alignment.Center))

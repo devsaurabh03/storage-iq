@@ -270,8 +270,8 @@ class MediaStoreScanner @Inject constructor(
 
     private fun classifyFile(path: String, mime: String, mediaType: Int): StorageCategory {
         return when {
-            path.contains("WhatsApp", ignoreCase = true) -> StorageCategory.WHATSAPP
-            path.contains("Telegram", ignoreCase = true) -> StorageCategory.TELEGRAM
+            path.contains("WhatsApp", ignoreCase = true) || path.contains("com.whatsapp", ignoreCase = true) -> StorageCategory.WHATSAPP
+            path.contains("Telegram", ignoreCase = true) || path.contains("org.telegram", ignoreCase = true) || path.contains("challegram", ignoreCase = true) -> StorageCategory.TELEGRAM
             path.contains("Screenshot", ignoreCase = true) -> StorageCategory.SCREENSHOTS
             path.contains("Screenrecord", ignoreCase = true) -> StorageCategory.SCREEN_RECORDINGS
             path.contains("Download", ignoreCase = true) -> StorageCategory.DOWNLOADS
@@ -295,8 +295,8 @@ class MediaStoreScanner @Inject constructor(
 
     private fun detectSourceApp(path: String): String? {
         return when {
-            path.contains("WhatsApp", ignoreCase = true) -> "WhatsApp"
-            path.contains("Telegram", ignoreCase = true) -> "Telegram"
+            path.contains("WhatsApp", ignoreCase = true) || path.contains("com.whatsapp", ignoreCase = true) -> "WhatsApp"
+            path.contains("Telegram", ignoreCase = true) || path.contains("org.telegram", ignoreCase = true) || path.contains("challegram", ignoreCase = true) -> "Telegram"
             else -> null
         }
     }

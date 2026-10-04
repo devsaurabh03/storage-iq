@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.storage.intelligence.core.common.FormattingUtils
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.feature.photo.model.PhotoOptimizationCandidate
 import java.io.File
@@ -37,25 +38,38 @@ fun PhotoOptimizationScreen(
     var showConfirmDialog by remember { mutableStateOf(false) }
     var resultSummaryText by remember { mutableStateOf<String?>(null) }
 
+    val worthOptimizingList = uiState.candidates.filter { it.isWorthOptimizing }
+    val allSelected = worthOptimizingList.isNotEmpty() && worthOptimizingList.all { it.isSelected }
+    val selectedCount = uiState.candidates.count { it.isSelected }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Smart Photo Optimization", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        if (selectedCount > 0) "$selectedCount Selected" else "Photo Optimization",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    val allSelected = uiState.candidates.filter { it.isWorthOptimizing }.all { it.isSelected }
-                    TextButton(onClick = { viewModel.selectAll(!allSelected) }) {
-                        Text(if (allSelected) "Deselect" else "Select All")
+                    if (worthOptimizingList.isNotEmpty()) {
+                        TextButton(onClick = { viewModel.selectAll(!allSelected) }) {
+                            Text(
+                                if (allSelected) "Deselect" else "Select All (${worthOptimizingList.size})",
+                                color = EmeraldPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             )
         },
         bottomBar = {
-            val selectedCount = uiState.candidates.count { it.isSelected }
             if (selectedCount > 0) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -105,18 +119,11 @@ fun PhotoOptimizationScreen(
             var activeFilter by remember { mutableStateOf(0) } // 0: Needs Optimization, 1: Already Optimal, 2: All
 
             if (uiState.isEvaluating) {
-                Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator(color = EmeraldPrimary)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Scanning device photos and analyzing compression potential...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                WorldFactsLoadingView(
+                    statusTitle = "Analyzing Photo Compression Potential…",
+                    statusSubtitle = "Evaluating megapixels, metadata, and visual fidelity",
+                    accentColor = EmeraldPrimary
+                )
             } else if (uiState.totalScannedCount == 0 || uiState.candidates.isEmpty()) {
                 Column(
                     modifier = Modifier
@@ -372,38 +379,23 @@ fun PhotoOptimizationScreen(
             if (uiState.isOptimizing) {
                 Card(
                     modifier = Modifier
-                        .fillMaxWidth(0.9f)
+                        .fillMaxWidth(0.92f)
                         .align(Alignment.Center),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator(color = EmeraldPrimary)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Optimizing Photo ${uiState.currentOptimizingIndex} of ${uiState.totalToOptimize}...",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Validating image fidelity before writing...",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (uiState.totalSavedSoFarBytes > 0) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Saved: ${FormattingUtils.formatBytes(uiState.totalSavedSoFarBytes)}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = EmeraldPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                    WorldFactsLoadingView(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        statusTitle = "Optimizing Photo ${uiState.currentOptimizingIndex} of ${uiState.totalToOptimize}…",
+                        statusSubtitle = if (uiState.totalSavedSoFarBytes > 0) {
+                            "Saved: ${FormattingUtils.formatBytes(uiState.totalSavedSoFarBytes)} • Validating image fidelity"
+                        } else {
+                            "Validating visual fidelity and re-encoding"
+                        },
+                        accentColor = EmeraldPrimary
+                    )
                 }
             }
 

@@ -28,46 +28,20 @@ class StorageIntelligenceApp : Application(), Configuration.Provider {
             defaultHandler?.uncaughtException(thread, throwable)
         }
 
-        scheduleBackgroundWorkers()
+        // Ensure zero background processing when the app is closed:
+        // Explicitly cancel all WorkManager periodic workers and tasks so the device does not run background scans or get warm.
+        cancelAllBackgroundTasks()
     }
 
-    private fun scheduleBackgroundWorkers() {
+    private fun cancelAllBackgroundTasks() {
         try {
             val workManager = androidx.work.WorkManager.getInstance(this)
-
-            // Periodic snapshot worker: every 12 hours to track storage growth timeline
-            val snapshotConstraints = androidx.work.Constraints.Builder()
-                .setRequiresBatteryNotLow(true)
-                .build()
-
-            val snapshotRequest = androidx.work.PeriodicWorkRequestBuilder<com.storage.intelligence.data.worker.PeriodicSnapshotWorker>(
-                12, java.util.concurrent.TimeUnit.HOURS
-            ).setConstraints(snapshotConstraints).build()
-
-            workManager.enqueueUniquePeriodicWork(
-                "periodic_storage_snapshot",
-                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-                snapshotRequest
-            )
-
-            // Storage scan worker: daily background scan
-            val scanConstraints = androidx.work.Constraints.Builder()
-                .setRequiresBatteryNotLow(true)
-                .build()
-
-            val scanRequest = androidx.work.PeriodicWorkRequestBuilder<com.storage.intelligence.data.worker.StorageScanWorker>(
-                24, java.util.concurrent.TimeUnit.HOURS
-            ).setConstraints(scanConstraints).build()
-
-            workManager.enqueueUniquePeriodicWork(
-                "periodic_storage_scan",
-                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-                scanRequest
-            )
-
-            com.storage.intelligence.core.logging.AppLogger.d("App", "Background maintenance workers successfully enqueued.")
+            workManager.cancelUniqueWork("periodic_storage_scan")
+            workManager.cancelUniqueWork("periodic_storage_snapshot")
+            workManager.cancelAllWork()
+            com.storage.intelligence.core.logging.AppLogger.i("App", "All background WorkManager tasks explicitly cancelled. Zero background processing.")
         } catch (e: Exception) {
-            com.storage.intelligence.core.logging.AppLogger.e("App", "Failed to enqueue background maintenance workers: ${e.message}", e)
+            com.storage.intelligence.core.logging.AppLogger.e("App", "Failed to cancel background workers: ${e.message}", e)
         }
     }
 

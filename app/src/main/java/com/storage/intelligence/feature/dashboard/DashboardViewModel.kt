@@ -17,6 +17,18 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+import com.storage.intelligence.feature.performance.provider.BatteryInfoProvider
+import com.storage.intelligence.feature.performance.provider.RamInfoProvider
+
+data class LiveSystemTelemetry(
+    val batteryPercent: Int = 0,
+    val tempCelsius: Double = 0.0,
+    val isCharging: Boolean = false,
+    val ramUsedBytes: Long = 0L,
+    val ramTotalBytes: Long = 0L,
+    val ramUsedPercent: Int = 0
+)
+
 data class DashboardUiState(
     val overview: StorageOverview,
     val growthReport: StorageGrowthReport? = null,
@@ -31,7 +43,9 @@ class DashboardViewModel @Inject constructor(
     private val storageRepository: StorageRepository,
     private val preferencesRepository: UserPreferencesRepository,
     private val fileDao: FileMetadataDao,
-    cpuMonitoringEngine: CpuMonitoringEngine
+    cpuMonitoringEngine: CpuMonitoringEngine,
+    private val ramInfoProvider: RamInfoProvider,
+    private val batteryInfoProvider: BatteryInfoProvider
 ) : ViewModel() {
 
     private val _isScanning = MutableStateFlow(false)
@@ -42,6 +56,27 @@ class DashboardViewModel @Inject constructor(
 
     val cpuSnapshot: StateFlow<CpuSnapshot?> = cpuMonitoringEngine.startMonitoring()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val systemTelemetry: StateFlow<LiveSystemTelemetry> = flow {
+        while (true) {
+            val battery = try { batteryInfoProvider.getBatteryInfo() } catch (_: Exception) { null }
+            val ram = try { ramInfoProvider.getRamInfo() } catch (_: Exception) { null }
+            val usedPercent = if (ram != null && ram.totalBytes > 0L) {
+                ((ram.usedBytes.toDouble() / ram.totalBytes) * 100).toInt()
+            } else 0
+            emit(
+                LiveSystemTelemetry(
+                    batteryPercent = battery?.levelPercent ?: 0,
+                    tempCelsius = battery?.tempCelsius ?: 0.0,
+                    isCharging = battery?.isCharging ?: false,
+                    ramUsedBytes = ram?.usedBytes ?: 0L,
+                    ramTotalBytes = ram?.totalBytes ?: 0L,
+                    ramUsedPercent = usedPercent
+                )
+            )
+            kotlinx.coroutines.delay(2000L)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LiveSystemTelemetry())
 
     /**
      * Emits Result.Loading on first launch until:

@@ -19,11 +19,19 @@ class MessagingMediaViewModel @Inject constructor(
     private val storageRepository: StorageRepository,
     private val getMessagingStorageUseCase: GetMessagingStorageUseCase,
     private val deleteSelectedFilesUseCase: DeleteSelectedFilesUseCase,
-    private val duplicateRepository: com.storage.intelligence.domain.repository.DuplicateRepository
+    private val duplicateRepository: com.storage.intelligence.domain.repository.DuplicateRepository,
+    private val getWhatsAppSentReceivedUseCase: com.storage.intelligence.domain.usecase.GetWhatsAppSentReceivedUseCase,
+    private val permissionManager: com.storage.intelligence.core.permissions.PermissionManager
 ) : ViewModel() {
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    init {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            duplicateRepository.runExactDuplicateDetection()
+        }
+    }
 
     fun rescanStorage() {
         viewModelScope.launch {
@@ -43,6 +51,18 @@ class MessagingMediaViewModel @Inject constructor(
     private val _selectedSubcategory = MutableStateFlow<MessagingMediaType?>(null)
     val selectedSubcategory: StateFlow<MessagingMediaType?> = _selectedSubcategory.asStateFlow()
 
+    val isPartialPermission: Boolean
+        get() = permissionManager.isPartialAccess()
+
+    val sentReceivedState: StateFlow<Pair<WhatsAppSentReceivedSummary, List<SentReceivedCorrelationGroup>>> =
+        _selectedApp.flatMapLatest { app ->
+            getWhatsAppSentReceivedUseCase(app)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            Pair(WhatsAppSentReceivedSummary(), emptyList())
+        )
+
     val messagingReport: StateFlow<MessagingStorageReport> = getMessagingStorageUseCase()
         .stateIn(
             viewModelScope,
@@ -52,16 +72,29 @@ class MessagingMediaViewModel @Inject constructor(
 
     val mediaFiles: StateFlow<Result<List<FileItem>>> = combine(
         _selectedApp,
-        _selectedSubcategory
-    ) { app, subcategory ->
-        Pair(app, subcategory)
-    }.flatMapLatest { (app, subcategory) ->
+        _selectedSubcategory,
+        sentReceivedState
+    ) { app, subcategory, sentReceived ->
+        Triple(app, subcategory, sentReceived.second)
+    }.flatMapLatest { (app, subcategory, correlated) ->
         storageRepository.getMessagingMediaFlow(app).map { files ->
             if (subcategory == null) {
                 files
             } else {
                 files.filter { file ->
                     when (subcategory) {
+                        MessagingMediaType.SENT_AND_RECEIVED -> {
+                            val ids = correlated.flatMap { listOf(it.sentFile.id, it.receivedFile.id) }.toSet()
+                            ids.contains(file.id)
+                        }
+                        MessagingMediaType.EXACT_MATCHES -> file.isDuplicate
+                        MessagingMediaType.SIMILAR_MATCHES -> {
+                            val similarIds = correlated
+                                .filter { it.correlationType == CorrelationType.VISUAL_SIMILARITY }
+                                .flatMap { listOf(it.sentFile.id, it.receivedFile.id) }.toSet()
+                            similarIds.contains(file.id)
+                        }
+                        MessagingMediaType.GREETINGS -> file.isGreetingOrGoodMorning
                         MessagingMediaType.VIDEOS -> file.category == StorageCategory.VIDEOS || file.mimeType.startsWith("video/")
                         MessagingMediaType.IMAGES -> file.category == StorageCategory.PHOTOS || file.mimeType.startsWith("image/")
                         MessagingMediaType.DOCUMENTS -> file.category == StorageCategory.DOCUMENTS || file.mimeType.contains("pdf") || file.mimeType.contains("document")
@@ -93,6 +126,13 @@ class MessagingMediaViewModel @Inject constructor(
     fun toggleSelection(fileId: Long, isSelected: Boolean) {
         val current = _selectedFiles.value.toMutableSet()
         if (isSelected) current.add(fileId) else current.remove(fileId)
+        _selectedFiles.value = current
+    }
+
+    fun selectAllSentCopies(groups: List<SentReceivedCorrelationGroup>) {
+        val sentIds = groups.map { it.sentFile.id }.toSet()
+        val current = _selectedFiles.value.toMutableSet()
+        current.addAll(sentIds)
         _selectedFiles.value = current
     }
 

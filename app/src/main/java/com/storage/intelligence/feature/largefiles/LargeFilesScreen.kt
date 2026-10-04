@@ -20,6 +20,7 @@ import com.storage.intelligence.core.common.Result
 import com.storage.intelligence.core.common.SizeThreshold
 import com.storage.intelligence.core.ui.components.FileCard
 import com.storage.intelligence.core.ui.components.SafeDeleteDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,7 +122,13 @@ fun LargeFilesScreen(
 
             Box(modifier = Modifier.weight(1f)) {
                 when (val state = filesState) {
-                    is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    is Result.Loading -> {
+                        WorldFactsLoadingView(
+                            statusTitle = "Locating Heavy Files…",
+                            statusSubtitle = "Cataloging videos, archives, and bulk downloads",
+                            accentColor = EmeraldPrimary
+                        )
+                    }
                     is Result.Error -> Text("Error loading large files", modifier = Modifier.align(Alignment.Center))
                     is Result.Success -> {
                         val files = state.data

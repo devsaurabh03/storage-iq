@@ -33,6 +33,27 @@ class PermissionManager @Inject constructor(
     }
 
     fun checkPermissionState(): PermissionState {
+        if (Build.VERSION.SDK_INT >= 34) {
+            val hasSelectedAccess = ContextCompat.checkSelfPermission(
+                context,
+                "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasFullImages = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_IMAGES
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasFullVideos = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_VIDEO
+            ) == PackageManager.PERMISSION_GRANTED
+
+            return when {
+                hasFullImages && hasFullVideos -> PermissionState.GRANTED
+                hasSelectedAccess || hasFullImages || hasFullVideos -> PermissionState.PARTIAL
+                else -> PermissionState.DENIED
+            }
+        }
+
         val required = getRequiredPermissions()
         val grantedCount = required.count { permission ->
             ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -43,6 +64,10 @@ class PermissionManager @Inject constructor(
             grantedCount > 0 -> PermissionState.PARTIAL
             else -> PermissionState.DENIED
         }
+    }
+
+    fun isPartialAccess(): Boolean {
+        return checkPermissionState() == PermissionState.PARTIAL
     }
 
     fun isStoragePermissionGranted(): Boolean {

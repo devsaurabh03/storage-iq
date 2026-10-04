@@ -47,6 +47,23 @@ import com.storage.intelligence.feature.performance.ui.PerformanceDashboardScree
 
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.storage.intelligence.core.ui.theme.PrimaryCyan
+import com.storage.intelligence.core.ui.theme.SurfaceOled
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -87,10 +104,10 @@ object Routes {
 }
 
 sealed class BottomNavItem(val route: String, val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    data object Home : BottomNavItem(Routes.DASHBOARD, "Home", Icons.Default.Home)
-    data object Performance : BottomNavItem(Routes.PERFORMANCE, "Performance", Icons.Default.Speed)
-    data object Storage : BottomNavItem(Routes.CLEANUP, "Storage", Icons.Default.Folder)
-    data object Me : BottomNavItem(Routes.ME, "Me", Icons.Default.Person)
+    data object Overview : BottomNavItem(Routes.DASHBOARD, "Overview", Icons.Default.Dashboard)
+    data object Cleanup : BottomNavItem(Routes.CLEANUP, "Cleanup", Icons.Default.AutoFixHigh)
+    data object Media : BottomNavItem(Routes.VIDEO_HOME, "Media", Icons.Default.Movie)
+    data object Vitals : BottomNavItem(Routes.PERFORMANCE, "Vitals", Icons.Default.Speed)
 }
 
 @Composable
@@ -104,35 +121,72 @@ fun AppNavHost(
     val currentRoute = navBackStackEntry?.destination?.route
 
     val bottomNavItems = listOf(
-        BottomNavItem.Home,
-        BottomNavItem.Performance,
-        BottomNavItem.Storage,
-        BottomNavItem.Me
+        BottomNavItem.Overview,
+        BottomNavItem.Cleanup,
+        BottomNavItem.Media,
+        BottomNavItem.Vitals
     )
 
-    val showBottomBar = currentRoute in listOf(Routes.DASHBOARD, Routes.PERFORMANCE, Routes.CLEANUP, Routes.ME)
+    val showBottomBar = currentRoute in listOf(Routes.DASHBOARD, Routes.PERFORMANCE, Routes.CLEANUP, Routes.ME, Routes.VIDEO_HOME)
 
     val sharedVideoViewModel: com.storage.intelligence.feature.video.presentation.VideoViewModel = hiltViewModel()
 
     Scaffold(
+        containerColor = SurfaceOled,
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
-                    bottomNavItems.forEach { item ->
-                        NavigationBarItem(
-                            icon = { Icon(imageVector = item.icon, contentDescription = item.title) },
-                            label = { Text(text = item.title) },
-                            selected = currentRoute == item.route,
-                            onClick = {
-                                navController.navigate(item.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 10.dp, start = 16.dp, end = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xE60A0E16))
+                            .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        bottomNavItems.forEach { item ->
+                            val isSelected = currentRoute == item.route
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (isSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+                                    .clickable {
+                                        navController.navigate(item.route) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                saveState = true
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = item.icon,
+                                        contentDescription = item.title,
+                                        tint = if (isSelected) PrimaryCyan else Color.White.copy(alpha = 0.40f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = item.title,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isSelected) PrimaryCyan else Color.White.copy(alpha = 0.40f)
+                                    )
                                 }
                             }
-                        )
+                        }
                     }
                 }
             }
@@ -301,7 +355,8 @@ fun AppNavHost(
                     isLoading = uiState.isLoading,
                     onFindSpaceClick = { navController.navigate(Routes.VIDEO_LIBRARY) },
                     onReviewFourKClick = { navController.navigate(Routes.VIDEO_LIBRARY) },
-                    onNavigateToSettings = { navController.navigate(Routes.SETTINGS) }
+                    onNavigateToSettings = { navController.navigate(Routes.SETTINGS) },
+                    onNavigateToPhotos = { navController.navigate(Routes.PHOTO_OPTIMIZATION) }
                 )
             }
 
@@ -323,6 +378,11 @@ fun AppNavHost(
                         sharedVideoViewModel.showCompressionSheet(true)
                         navController.navigate(Routes.VIDEO_DETAIL)
                     },
+                    onBatchOptimizeClick = { selectedVideos ->
+                        sharedVideoViewModel.startBatchOptimization(selectedVideos)
+                        navController.navigate(Routes.VIDEO_ACTIVITY)
+                    },
+                    onNavigateToPhotoOptimization = { navController.navigate(Routes.PHOTO_OPTIMIZATION) },
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

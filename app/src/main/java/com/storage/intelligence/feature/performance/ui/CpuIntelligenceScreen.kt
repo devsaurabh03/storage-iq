@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.feature.performance.model.ThermalState
 
@@ -49,7 +50,11 @@ fun CpuIntelligenceScreen(
                 .padding(paddingValues)
         ) {
             if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                WorldFactsLoadingView(
+                    statusTitle = "Analyzing Processor Topologies…",
+                    statusSubtitle = "Reading CPU cluster frequencies and thread schedulers",
+                    accentColor = EmeraldPrimary
+                )
             } else {
                 val identity = uiState.identity
                 val activity = uiState.activity

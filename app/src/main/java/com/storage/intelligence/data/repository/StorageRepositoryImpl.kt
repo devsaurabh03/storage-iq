@@ -56,14 +56,34 @@ class StorageRepositoryImpl @Inject constructor(
                 )
             }
 
-            // Deterministic recoverable calculation
-            val dupVideosBytes = allEntities.filter { it.category == StorageCategory.VIDEOS.name && it.sha256Hash != null }.sumOf { it.sizeBytes / 2 }
-            val dupPhotosBytes = allEntities.filter { it.category == StorageCategory.PHOTOS.name && it.sha256Hash != null }.sumOf { it.sizeBytes / 2 }
+            // Deterministic real-time duplicate calculation:
+            // Group files by SHA-256 hash and strictly count redundant copies only when 2 or more files have matching hashes.
+            val exactDupGroups = allEntities
+                .filter { !it.sha256Hash.isNullOrEmpty() }
+                .groupBy { it.sha256Hash!! }
+                .filter { it.value.size > 1 }
+
+            var dupVideosBytes = 0L
+            var dupPhotosBytes = 0L
+            var otherDuplicatesBytes = 0L
+
+            exactDupGroups.values.forEach { group ->
+                val sorted = group.sortedByDescending { it.modifiedTimeMs }
+                val redundantCopies = sorted.drop(1)
+                redundantCopies.forEach { dupFile ->
+                    when (dupFile.category) {
+                        StorageCategory.VIDEOS.name -> dupVideosBytes += dupFile.sizeBytes
+                        StorageCategory.PHOTOS.name -> dupPhotosBytes += dupFile.sizeBytes
+                        else -> otherDuplicatesBytes += dupFile.sizeBytes
+                    }
+                }
+            }
+
             val ninetyDaysAgo = System.currentTimeMillis() - (90L * 24 * 60 * 60 * 1000)
             val oldDownloadsBytes = allEntities.filter { it.isDownload && it.modifiedTimeMs < ninetyDaysAgo }.sumOf { it.sizeBytes }
             val screenshotsBytes = allEntities.filter { it.isScreenshot }.sumOf { it.sizeBytes }
 
-            val totalRecoverable = dupVideosBytes + dupPhotosBytes + oldDownloadsBytes + screenshotsBytes
+            val totalRecoverable = dupVideosBytes + dupPhotosBytes + otherDuplicatesBytes + oldDownloadsBytes + screenshotsBytes
 
             val recoverableSummary = RecoverableSpace(
                 totalRecoverableBytes = totalRecoverable,
@@ -71,7 +91,7 @@ class StorageRepositoryImpl @Inject constructor(
                 duplicatePhotosBytes = dupPhotosBytes,
                 oldDownloadsBytes = oldDownloadsBytes,
                 screenshotsBytes = screenshotsBytes,
-                otherRecoverableBytes = 0L
+                otherRecoverableBytes = otherDuplicatesBytes
             )
 
             val insights = mutableListOf<StorageInsight>()
@@ -176,14 +196,28 @@ class StorageRepositoryImpl @Inject constructor(
             val waFiles = allEntities.filter { it.sourceApp == "WhatsApp" }
             val tgFiles = allEntities.filter { it.sourceApp == "Telegram" }
 
+            val waDomainFiles = waFiles.map { it.toDomain() }
+            val waGreetings = waDomainFiles.filter { it.isGreetingOrGoodMorning }
+            val waSentFiles = waDomainFiles.filter { it.isForwarded }
+            val waSentBytes = waSentFiles.sumOf { it.sizeBytes }
+            val waExactDupFiles = waDomainFiles.filter { it.isDuplicate }
+            val waExactDupBytes = waExactDupFiles.sumOf { it.sizeBytes }
+
             val waSubcategories = listOf(
+                MessagingSubcategoryBreakdown(MessagingMediaType.SENT_AND_RECEIVED, waSentBytes, waSentFiles.size),
+                MessagingSubcategoryBreakdown(MessagingMediaType.EXACT_MATCHES, waExactDupBytes, waExactDupFiles.size),
+                MessagingSubcategoryBreakdown(MessagingMediaType.GREETINGS, waGreetings.sumOf { it.sizeBytes }, waGreetings.size),
                 MessagingSubcategoryBreakdown(MessagingMediaType.VIDEOS, waFiles.filter { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }),
                 MessagingSubcategoryBreakdown(MessagingMediaType.IMAGES, waFiles.filter { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }),
                 MessagingSubcategoryBreakdown(MessagingMediaType.DOCUMENTS, waFiles.filter { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }),
                 MessagingSubcategoryBreakdown(MessagingMediaType.AUDIO, waFiles.filter { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") }.sumOf { it.sizeBytes }, waFiles.count { it.category == StorageCategory.AUDIO.name || it.mimeType.startsWith("audio/") })
             )
 
+            val tgDomainFiles = tgFiles.map { it.toDomain() }
+            val tgGreetings = tgDomainFiles.filter { it.isGreetingOrGoodMorning }
             val tgSubcategories = listOf(
+                MessagingSubcategoryBreakdown(MessagingMediaType.EXACT_MATCHES, tgFiles.filter { it.sha256Hash != null }.sumOf { it.sizeBytes }, tgFiles.count { it.sha256Hash != null }),
+                MessagingSubcategoryBreakdown(MessagingMediaType.GREETINGS, tgGreetings.sumOf { it.sizeBytes }, tgGreetings.size),
                 MessagingSubcategoryBreakdown(MessagingMediaType.VIDEOS, tgFiles.filter { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.VIDEOS.name || it.mimeType.startsWith("video/") }),
                 MessagingSubcategoryBreakdown(MessagingMediaType.IMAGES, tgFiles.filter { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.PHOTOS.name || it.mimeType.startsWith("image/") }),
                 MessagingSubcategoryBreakdown(MessagingMediaType.DOCUMENTS, tgFiles.filter { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }.sumOf { it.sizeBytes }, tgFiles.count { it.category == StorageCategory.DOCUMENTS.name || it.mimeType.contains("pdf") || it.mimeType.contains("document") }),

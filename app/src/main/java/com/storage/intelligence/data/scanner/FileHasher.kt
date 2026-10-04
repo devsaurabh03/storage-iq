@@ -1,7 +1,11 @@
 package com.storage.intelligence.data.scanner
 
+import android.content.ContentUris
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.provider.MediaStore
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
@@ -9,7 +13,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class FileHasher @Inject constructor() {
+class FileHasher @Inject constructor(
+    @ApplicationContext private val context: Context? = null
+) {
 
     fun computeSha256(inputStream: InputStream): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -24,13 +30,25 @@ class FileHasher @Inject constructor() {
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
-    fun computeSha256(file: File): String? {
-        if (!file.exists() || !file.canRead()) return null
-        return try {
-            computeSha256(file.inputStream())
-        } catch (e: Exception) {
-            null
+    fun computeSha256(file: File, mediaStoreId: Long? = null): String? {
+        if (file.exists() && file.canRead()) {
+            try {
+                return computeSha256(file.inputStream())
+            } catch (_: Exception) { }
         }
+        // Scoped storage fallback: read via MediaStore ContentResolver if direct File I/O is restricted
+        if (context != null && mediaStoreId != null && mediaStoreId > 0) {
+            try {
+                val uri = ContentUris.withAppendedId(
+                    MediaStore.Files.getContentUri("external"),
+                    mediaStoreId
+                )
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    return computeSha256(stream)
+                }
+            } catch (_: Exception) { }
+        }
+        return null
     }
 
     /**
@@ -57,6 +75,37 @@ class FileHasher @Inject constructor() {
             resized.recycle()
         }
         return hash
+    }
+
+    fun computeDHash(file: File, mediaStoreId: Long? = null): Long? {
+        val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+        if (file.exists() && file.canRead()) {
+            try {
+                val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                if (bitmap != null) {
+                    val hash = computeDHash(bitmap)
+                    bitmap.recycle()
+                    return hash
+                }
+            } catch (_: Exception) { }
+        }
+        if (context != null && mediaStoreId != null && mediaStoreId > 0) {
+            try {
+                val uri = ContentUris.withAppendedId(
+                    MediaStore.Files.getContentUri("external"),
+                    mediaStoreId
+                )
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val bitmap = android.graphics.BitmapFactory.decodeStream(stream, null, options)
+                    if (bitmap != null) {
+                        val hash = computeDHash(bitmap)
+                        bitmap.recycle()
+                        return hash
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+        return null
     }
 
     fun calculateHammingDistance(hash1: Long, hash2: Long): Int {

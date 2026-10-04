@@ -93,7 +93,13 @@ fun CleanupCenterScreen(
                 .padding(paddingValues)
         ) {
             when (val state = uiState) {
-                is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = EmeraldPrimary)
+                is Result.Loading -> {
+                    com.storage.intelligence.core.ui.components.WorldFactsLoadingView(
+                        statusTitle = "Analyzing Storage Opportunities…",
+                        statusSubtitle = "Scanning downloads, screenshots & media",
+                        accentColor = EmeraldPrimary
+                    )
+                }
                 is Result.Error -> Text("Error loading storage map", modifier = Modifier.align(Alignment.Center))
                 is Result.Success -> {
                     val overview = state.data
@@ -103,21 +109,44 @@ fun CleanupCenterScreen(
                             recoverable.oldDownloadsBytes +
                             recoverable.screenshotsBytes
 
+                    val duplicateMediaBytes = recoverable.duplicateVideosBytes + recoverable.duplicatePhotosBytes
                     val breakdownItems = mutableListOf<RecoveryItemBreakdown>()
-                    if (recoverable.duplicateVideosBytes + recoverable.duplicatePhotosBytes > 0) {
+                    if (duplicateMediaBytes > 0) {
                         breakdownItems.add(
-                            RecoveryItemBreakdown("Duplicate Media", recoverable.duplicateVideosBytes + recoverable.duplicatePhotosBytes, CategoryVideoColor)
+                            RecoveryItemBreakdown(
+                                title = "Duplicate Media",
+                                sizeBytes = duplicateMediaBytes,
+                                color = CategoryVideoColor,
+                                onClick = onNavigateToDuplicates
+                            )
                         )
                     }
                     if (recoverable.oldDownloadsBytes > 0) {
                         breakdownItems.add(
-                            RecoveryItemBreakdown("Old Downloads", recoverable.oldDownloadsBytes, CategoryDownloadColor)
+                            RecoveryItemBreakdown(
+                                title = "Old Downloads",
+                                sizeBytes = recoverable.oldDownloadsBytes,
+                                color = CategoryDownloadColor,
+                                onClick = onNavigateToDownloads
+                            )
                         )
                     }
                     if (recoverable.screenshotsBytes > 0) {
                         breakdownItems.add(
-                            RecoveryItemBreakdown("Screenshots", recoverable.screenshotsBytes, CategoryScreenshotColor)
+                            RecoveryItemBreakdown(
+                                title = "Screenshots",
+                                sizeBytes = recoverable.screenshotsBytes,
+                                color = CategoryScreenshotColor,
+                                onClick = onNavigateToScreenshots
+                            )
                         )
+                    }
+
+                    val defaultReviewAction = when {
+                        duplicateMediaBytes > 0 -> onNavigateToDuplicates
+                        recoverable.oldDownloadsBytes > 0 -> onNavigateToDownloads
+                        recoverable.screenshotsBytes > 0 -> onNavigateToScreenshots
+                        else -> onNavigateToDuplicates
                     }
 
                     val videosCat = overview.categoryBreakdowns.find { it.category == StorageCategory.VIDEOS }
@@ -135,7 +164,7 @@ fun CleanupCenterScreen(
                             StorageRecoveryHeroCard(
                                 totalRecoverableBytes = totalRecoverableBytes,
                                 items = breakdownItems,
-                                onReviewClick = onNavigateToDuplicates
+                                onReviewClick = defaultReviewAction
                             )
                         } else {
                             EmptyStateCard(
@@ -173,7 +202,6 @@ fun CleanupCenterScreen(
                                     title = "Smart Video Optimization",
                                     subtitle = "Compress large videos with hardware AV1/HEVC (~60% space reduction)",
                                     sizeBytes = videosCat.totalSizeBytes,
-                                    actionLabel = "Optimize videos →",
                                     icon = Icons.Default.Movie,
                                     iconColor = EmeraldPrimary,
                                     onClick = onNavigateToVideoOptimization
@@ -186,7 +214,6 @@ fun CleanupCenterScreen(
                                     title = "Smart Photo Optimization",
                                     subtitle = "Convert raw and uncompressed photos to modern WebP",
                                     sizeBytes = photosCat.totalSizeBytes,
-                                    actionLabel = "Optimize photos →",
                                     icon = Icons.Default.PhotoSizeSelectActual,
                                     iconColor = CategoryPhotoColor,
                                     onClick = onNavigateToPhotoOptimization
@@ -222,25 +249,24 @@ fun CleanupCenterScreen(
                                 title = "Stale & Unopened Files",
                                 subtitle = "Inspect old unopened files and documents",
                                 sizeBytes = 0L,
-                                actionLabel = "Inspect →",
                                 icon = Icons.Default.Compress,
                                 iconColor = EmeraldPrimary,
                                 onClick = onNavigateToStaleOptimize
                             )
 
-                            // Social Media & Messaging Duplicates (WhatsApp / Telegram)
+                            // Social Media & Messaging Media (WhatsApp / Telegram)
                             val waCat = overview.categoryBreakdowns.find { it.category == StorageCategory.WHATSAPP }
                             val tgCat = overview.categoryBreakdowns.find { it.category == StorageCategory.TELEGRAM }
                             val messagingBytes = (waCat?.totalSizeBytes ?: 0L) + (tgCat?.totalSizeBytes ?: 0L)
 
                             StorageRecommendationCard(
-                                title = "Social Media & Messaging Duplicates",
-                                subtitle = "Detect forwarded duplicate media & cleanup WhatsApp & Telegram storage",
+                                title = "Social Media & Messaging Media",
+                                subtitle = "Detect forwarded duplicate media & manage WhatsApp / Telegram files",
                                 sizeBytes = messagingBytes,
-                                actionLabel = "Review messaging duplicates →",
                                 icon = Icons.Default.Chat,
                                 iconColor = EmeraldPrimary,
-                                onClick = onNavigateToMessaging
+                                onClick = onNavigateToMessaging,
+                                sizeSuffix = "total media footprint"
                             )
 
                             // Visually Similar Photos
@@ -248,7 +274,6 @@ fun CleanupCenterScreen(
                                 title = "Visually Similar Photos",
                                 subtitle = "Review burst shots and near-identical photos",
                                 sizeBytes = 0L,
-                                actionLabel = "Review clusters →",
                                 icon = Icons.Default.Collections,
                                 iconColor = CategoryPhotoColor,
                                 onClick = onNavigateToSimilar
@@ -309,22 +334,26 @@ private fun StorageRecommendationCard(
     icon: ImageVector,
     iconColor: Color,
     onClick: () -> Unit,
-    actionLabel: String? = null
+    actionLabel: String? = null,
+    sizeSuffix: String = "recoverable"
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(46.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(iconColor.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
@@ -332,12 +361,17 @@ private fun StorageRecommendationCard(
                 Icon(imageVector = icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
             }
             Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
@@ -346,27 +380,20 @@ private fun StorageRecommendationCard(
                 if (sizeBytes > 0) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "${FormattingUtils.formatBytes(sizeBytes)} recoverable",
+                        text = "${FormattingUtils.formatBytes(sizeBytes)} $sizeSuffix",
                         style = MaterialTheme.typography.labelSmall,
                         color = EmeraldPrimary,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
-            if (actionLabel != null) {
-                Text(
-                    text = actionLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = EmeraldPrimary,
-                    fontWeight = FontWeight.Bold
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }

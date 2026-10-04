@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storage.intelligence.core.common.FormattingUtils
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.core.ui.theme.WarningAmber
 import com.storage.intelligence.feature.performance.model.RamPressure
@@ -55,7 +56,11 @@ fun PerformanceDashboardScreen(
                 .padding(paddingValues)
         ) {
             if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                WorldFactsLoadingView(
+                    statusTitle = "Sampling System Telemetry…",
+                    statusSubtitle = "Reading CPU utilization, memory pressure, and thermal levels",
+                    accentColor = EmeraldPrimary
+                )
             } else {
                 val snapshot = uiState.snapshot
                 val identity = uiState.cpuIdentity

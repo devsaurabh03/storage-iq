@@ -1,6 +1,10 @@
 package com.storage.intelligence.domain.model
 
 enum class MessagingMediaType(val displayName: String) {
+    SENT_AND_RECEIVED("Sent & Received"),
+    EXACT_MATCHES("Exact Matches"),
+    SIMILAR_MATCHES("Similar Matches"),
+    GREETINGS("Greetings & GM"),
     VIDEOS("Videos"),
     IMAGES("Images"),
     DOCUMENTS("Documents"),

@@ -21,6 +21,7 @@ import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.core.common.Result
 import com.storage.intelligence.core.ui.components.FileCard
 import com.storage.intelligence.core.ui.components.SafeDeleteDialog
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -112,7 +113,13 @@ fun SearchScreen(
                 .padding(paddingValues)
         ) {
             when (val state = resultsState) {
-                is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                is Result.Loading -> {
+                    WorldFactsLoadingView(
+                        statusTitle = "Searching Storage Index…",
+                        statusSubtitle = "Scanning matching filenames, extensions, and paths",
+                        accentColor = EmeraldPrimary
+                    )
+                }
                 is Result.Error -> Text("Error searching files", modifier = Modifier.align(Alignment.Center))
                 is Result.Success -> {
                     val files = state.data

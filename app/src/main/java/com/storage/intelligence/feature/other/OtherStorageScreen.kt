@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.storage.intelligence.R
 import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.core.common.Result
+import com.storage.intelligence.core.ui.components.WorldFactsLoadingView
 import com.storage.intelligence.core.ui.theme.EmeraldPrimary
 import com.storage.intelligence.core.ui.theme.WarningAmber
 import com.storage.intelligence.domain.model.ConfidenceLevel
@@ -52,7 +53,13 @@ fun OtherStorageScreen(
                 .padding(paddingValues)
         ) {
             when (val s = state) {
-                is Result.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                is Result.Loading -> {
+                    WorldFactsLoadingView(
+                        statusTitle = "Reconciling Storage Footprint…",
+                        statusSubtitle = "Analyzing system partition caches and unaccounted storage",
+                        accentColor = EmeraldPrimary
+                    )
+                }
                 is Result.Error -> Text(
                     text = "Unable to analyze unaccounted storage",
                     modifier = Modifier.align(Alignment.Center),

@@ -20,9 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.storage.intelligence.core.common.FormattingUtils
 import com.storage.intelligence.domain.model.FileItem
@@ -95,27 +97,81 @@ fun FileCard(
                 )
             }
 
-            if (fileItem.isDuplicate) {
+            if (fileItem.isDuplicate || fileItem.isForwarded || fileItem.isGreetingOrGoodMorning) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(androidx.compose.ui.graphics.Color(0xFFFFF3E0))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = if (fileItem.duplicateCopyCount > 1) "DUPLICATE (${fileItem.duplicateCopyCount} copies)" else "DUPLICATE",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = androidx.compose.ui.graphics.Color(0xFFE65100)
-                        )
+                    if (fileItem.isGreetingOrGoodMorning) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(androidx.compose.ui.graphics.Color(0xFFFEF3C7))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "GM",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontStyle = FontStyle.Italic,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color(0xFFD97706)
+                            )
+                        }
                     }
 
-                    if (onVerifyClick != null) {
+                    if (fileItem.isForwardedManyTimes) {
+                        if (fileItem.isGreetingOrGoodMorning) Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(androidx.compose.ui.graphics.Color(0xFFFEE2E2))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "Circulated",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontStyle = FontStyle.Italic,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color(0xFFDC2626)
+                            )
+                        }
+                    } else if (fileItem.isForwarded) {
+                        if (fileItem.isGreetingOrGoodMorning) Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(androidx.compose.ui.graphics.Color(0xFFE0F2FE))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "Sent",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontStyle = FontStyle.Italic,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color(0xFF0369A1)
+                            )
+                        }
+                    }
+
+                    if (fileItem.isDuplicate) {
+                        if (fileItem.isForwarded || fileItem.isForwardedManyTimes || fileItem.isGreetingOrGoodMorning) Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(androidx.compose.ui.graphics.Color(0xFFFFF3E0))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = if (fileItem.duplicateCopyCount > 1) "DUP ×${fileItem.duplicateCopyCount}" else "DUP",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color(0xFFE65100)
+                            )
+                        }
+                    }
+
+                    if (onVerifyClick != null && fileItem.isDuplicate) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Verify Copies →",
+                            text = "Verify →",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = com.storage.intelligence.core.ui.theme.EmeraldPrimary,

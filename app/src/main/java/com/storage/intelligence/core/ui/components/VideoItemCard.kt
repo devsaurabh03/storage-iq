@@ -33,6 +33,8 @@ fun VideoItemCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     estimatedSavingsBytes: Long = 0L,
+    isSelected: Boolean = false,
+    onSelectionToggle: ((Boolean) -> Unit)? = null,
     onPlayClick: (() -> Unit)? = null,
     onOptimizeClick: (() -> Unit)? = null
 ) {
@@ -40,8 +42,15 @@ fun VideoItemCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick),
+            .clickable(onClick = {
+                if (onSelectionToggle != null) {
+                    onSelectionToggle(!isSelected)
+                } else {
+                    onClick()
+                }
+            }),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, EmeraldPrimary) else null,
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -49,6 +58,18 @@ fun VideoItemCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (onSelectionToggle != null) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = onSelectionToggle,
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = EmeraldPrimary,
+                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+
                 val fileExists = remember(video.file.absolutePath) {
                     try { video.file.exists() } catch (_: Exception) { false }
                 }
