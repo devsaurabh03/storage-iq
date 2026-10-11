@@ -61,7 +61,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.storage.intelligence"
+        applicationId = "com.storage.iq"
         minSdk = 29
         targetSdk = 35
         versionCode = appVersionCode
