@@ -50,7 +50,7 @@ class StorageRepositoryImpl @Inject constructor(
         .flowOn(Dispatchers.Default)
         .shareIn(
             scope = repoScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.Lazily,
             replay = 1
         )
 

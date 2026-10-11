@@ -32,6 +32,9 @@ class PerformanceRepository @Inject constructor(
     private val recommendationEngine: PerformanceRecommendationEngine
 ) {
 
+    private var cachedCpuIdentity: CpuIdentity? = null
+    private var lastSnapshotSaveTimeMs: Long = 0L
+
     suspend fun getLatestPerformanceSnapshot(): PerformanceSnapshot = withContext(Dispatchers.IO) {
         val ram = ramInfoProvider.getRamInfo()
         val cpuActivity = cpuInfoProvider.getCpuActivity()
@@ -52,7 +55,7 @@ class PerformanceRepository @Inject constructor(
             activeAppCount = backgroundApps.size
         )
 
-        // Save lightweight snapshot to DB for historical performance charts
+        // Save lightweight snapshot to DB for historical performance charts (rate-limited)
         saveSnapshotToDb(snapshot)
 
         snapshot
@@ -65,8 +68,8 @@ class PerformanceRepository @Inject constructor(
         }
     }.flowOn(Dispatchers.IO)
 
-    suspend fun getCpuIdentity(): CpuIdentity {
-        return cpuInfoProvider.getCpuIdentity()
+    suspend fun getCpuIdentity(): CpuIdentity = withContext(Dispatchers.IO) {
+        cachedCpuIdentity ?: cpuInfoProvider.getCpuIdentity().also { cachedCpuIdentity = it }
     }
 
     suspend fun getActiveAppMemoryList(): List<AppMemoryInfo> {
@@ -77,21 +80,26 @@ class PerformanceRepository @Inject constructor(
         return backgroundActivityProvider.getBackgroundApps()
     }
 
-    suspend fun diagnoseWhyPhoneIsSlow(): DiagnosticResult = withContext(Dispatchers.IO) {
-        val snapshot = getLatestPerformanceSnapshot()
+    suspend fun diagnoseWhyPhoneIsSlow(existingSnapshot: PerformanceSnapshot? = null): DiagnosticResult = withContext(Dispatchers.IO) {
+        val snapshot = existingSnapshot ?: getLatestPerformanceSnapshot()
         val apps = getBackgroundApps().map { it.appName }
         diagnosticEngine.diagnoseWhyPhoneIsSlow(snapshot, apps)
     }
 
-    suspend fun diagnoseWhyPhoneIsHot(): DiagnosticResult = withContext(Dispatchers.IO) {
-        val snapshot = getLatestPerformanceSnapshot()
+    suspend fun diagnoseWhyPhoneIsHot(existingSnapshot: PerformanceSnapshot? = null): DiagnosticResult = withContext(Dispatchers.IO) {
+        val snapshot = existingSnapshot ?: getLatestPerformanceSnapshot()
         val apps = getBackgroundApps().map { it.appName }
         diagnosticEngine.diagnoseWhyPhoneIsHot(snapshot, apps)
     }
 
-    suspend fun getRecommendations(): List<RecommendationItem> = withContext(Dispatchers.IO) {
-        val snapshot = getLatestPerformanceSnapshot()
-        val slowDiag = diagnoseWhyPhoneIsSlow()
+    suspend fun getRecommendations(
+        existingSnapshot: PerformanceSnapshot? = null,
+        existingApps: List<BackgroundAppItem>? = null
+    ): List<RecommendationItem> = withContext(Dispatchers.IO) {
+        val snapshot = existingSnapshot ?: getLatestPerformanceSnapshot()
+        val apps = existingApps ?: getBackgroundApps()
+        val appNames = apps.map { it.appName }
+        val slowDiag = diagnosticEngine.diagnoseWhyPhoneIsSlow(snapshot, appNames)
         recommendationEngine.generateRecommendations(snapshot, slowDiag.findings)
     }
 
@@ -100,6 +108,11 @@ class PerformanceRepository @Inject constructor(
     }
 
     private suspend fun saveSnapshotToDb(snapshot: PerformanceSnapshot) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (now - lastSnapshotSaveTimeMs < 30_000L) {
+            return@withContext
+        }
+        lastSnapshotSaveTimeMs = now
         try {
             val entity = PerformanceSnapshotEntity(
                 timestampMs = snapshot.timestampMs,

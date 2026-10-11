@@ -9,6 +9,8 @@ import com.storage.intelligence.feature.performance.model.PerformanceSnapshot
 import com.storage.intelligence.feature.performance.provider.BackgroundAppItem
 import com.storage.intelligence.feature.performance.repository.PerformanceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -36,13 +38,25 @@ class PerformanceViewModel @Inject constructor(
     }
 
     fun loadData() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            val identity = performanceRepository.getCpuIdentity()
-            val appMemory = performanceRepository.getActiveAppMemoryList()
-            val bgApps = performanceRepository.getBackgroundApps()
-            val snapshot = performanceRepository.getLatestPerformanceSnapshot()
-            val recs = performanceRepository.getRecommendations()
+        viewModelScope.launch(Dispatchers.IO) {
+            // Only show full-screen loading spinner on cold launch if no data is cached yet
+            if (_uiState.value.snapshot == null) {
+                _uiState.update { it.copy(isLoading = true) }
+            }
+
+            // Run independent telemetry queries in parallel
+            val identityDeferred = async { performanceRepository.getCpuIdentity() }
+            val appMemoryDeferred = async { performanceRepository.getActiveAppMemoryList() }
+            val bgAppsDeferred = async { performanceRepository.getBackgroundApps() }
+            val snapshotDeferred = async { performanceRepository.getLatestPerformanceSnapshot() }
+
+            val identity = identityDeferred.await()
+            val appMemory = appMemoryDeferred.await()
+            val bgApps = bgAppsDeferred.await()
+            val snapshot = snapshotDeferred.await()
+
+            // Reuse the calculated snapshot & apps to prevent redundant DB writes and duplicate queries
+            val recs = performanceRepository.getRecommendations(snapshot, bgApps)
 
             _uiState.update {
                 it.copy(
@@ -60,7 +74,7 @@ class PerformanceViewModel @Inject constructor(
     fun refreshMemoryAnalysis() {
         viewModelScope.launch {
             _uiState.update { it.copy(isScanning = true) }
-            kotlinx.coroutines.delay(600)
+            kotlinx.coroutines.delay(400)
             loadData()
             _uiState.update { it.copy(isScanning = false) }
         }

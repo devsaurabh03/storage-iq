@@ -16,6 +16,10 @@
     <!-- Optional notification permission for background scanning completion -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Package query & usage stats permissions for App manager, RAM intelligence & background activity analysis -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+
     <application
         android:name=".StorageIntelligenceApp"
         android:allowBackup="true"

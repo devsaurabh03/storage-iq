@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -313,10 +314,11 @@ fun DashboardScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 // VisionOS Ambient Glowing Orbs
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun BoxScope.AmbientBackgroundGlows() {
     val infiniteTransition = rememberInfiniteTransition(label = "AmbientGlowTransition")
-    val glowAlpha by infiniteTransition.animateFloat(
+    val glowAlphaState = infiniteTransition.animateFloat(
         initialValue = 0.08f,
         targetValue = 0.16f,
         animationSpec = infiniteRepeatable(
@@ -326,53 +328,57 @@ private fun BoxScope.AmbientBackgroundGlows() {
         label = "GlowPulse"
     )
 
+    val cyanBrush = remember {
+        Brush.radialGradient(
+            colors = listOf(AmbientCyan, Color.Transparent)
+        )
+    }
+    val indigoBrush = remember {
+        Brush.radialGradient(
+            colors = listOf(AmbientIndigo, Color.Transparent)
+        )
+    }
+    val emeraldBrush = remember {
+        Brush.radialGradient(
+            colors = listOf(AmbientEmerald, Color.Transparent)
+        )
+    }
+
     // Top Center Cyan Orb
-    Canvas(
+    Box(
         modifier = Modifier
             .align(Alignment.TopCenter)
             .offset(y = (-80).dp)
             .size(360.dp)
-    ) {
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(AmbientCyan.copy(alpha = glowAlpha), Color.Transparent),
-                center = Offset(size.width / 2, size.height / 2),
-                radius = size.width / 2
-            )
-        )
-    }
+            .graphicsLayer {
+                alpha = glowAlphaState.value
+            }
+            .background(cyanBrush, CircleShape)
+    )
 
     // Mid-Right Indigo Orb
-    Canvas(
+    Box(
         modifier = Modifier
             .align(Alignment.TopEnd)
             .offset(x = 90.dp, y = 320.dp)
             .size(280.dp)
-    ) {
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(AmbientIndigo.copy(alpha = glowAlpha * 0.9f), Color.Transparent),
-                center = Offset(size.width / 2, size.height / 2),
-                radius = size.width / 2
-            )
-        )
-    }
+            .graphicsLayer {
+                alpha = glowAlphaState.value * 0.9f
+            }
+            .background(indigoBrush, CircleShape)
+    )
 
     // Bottom-Left Emerald Orb
-    Canvas(
+    Box(
         modifier = Modifier
             .align(Alignment.BottomStart)
             .offset(x = (-70).dp, y = (-120).dp)
             .size(250.dp)
-    ) {
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(AmbientEmerald.copy(alpha = glowAlpha * 0.8f), Color.Transparent),
-                center = Offset(size.width / 2, size.height / 2),
-                radius = size.width / 2
-            )
-        )
-    }
+            .graphicsLayer {
+                alpha = glowAlphaState.value * 0.8f
+            }
+            .background(emeraldBrush, CircleShape)
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

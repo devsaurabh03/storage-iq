@@ -1,6 +1,7 @@
 package com.storage.intelligence.feature.ram.analyzer
 
 import android.app.ActivityManager
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -13,7 +14,7 @@ import javax.inject.Singleton
 
 /**
  * Identifies apps with observable background activity via official Android APIs.
- * Supports ActivityManager.runningAppProcesses, runningServices, and PackageManager user app fallbacks.
+ * Supports ActivityManager.runningAppProcesses, UsageStatsManager, runningServices, and PackageManager user app fallbacks.
  * Excludes StorageIQ's own processes and does not fabricate per-app RAM numbers.
  */
 @Singleton
@@ -58,7 +59,60 @@ class BackgroundActivityAnalyzer @Inject constructor(
             }
         }
 
-        // ── TIER 2: ActivityManager.getRunningServices fallback ──
+        // ── TIER 2: UsageStatsManager (recent background & foreground apps) ──
+        try {
+            val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            if (usageStatsManager != null) {
+                val now = System.currentTimeMillis()
+                val startTime = now - (3L * 60L * 60L * 1000L) // last 3 hours
+                val usageStatsList = usageStatsManager.queryUsageStats(
+                    UsageStatsManager.INTERVAL_BEST,
+                    startTime,
+                    now
+                )
+
+                if (!usageStatsList.isNullOrEmpty()) {
+                    val sortedStats = usageStatsList
+                        .filter { stat ->
+                            val pkg = stat.packageName
+                            pkg != selfPackage &&
+                                    !pkg.startsWith("$selfPackage.") &&
+                                    !pkg.startsWith("com.android.systemui") &&
+                                    pkg != "android" &&
+                                    stat.lastTimeUsed >= startTime
+                        }
+                        .sortedByDescending { it.lastTimeUsed }
+
+                    for (stat in sortedStats) {
+                        val packageName = stat.packageName
+                        if (!resultMap.containsKey(packageName)) {
+                            val appName = try {
+                                val appInfo = pm.getApplicationInfo(packageName, 0)
+                                pm.getApplicationLabel(appInfo).toString()
+                            } catch (_: Exception) {
+                                packageName
+                            }
+
+                            val state = if (now - stat.lastTimeUsed < 15 * 60 * 1000L) {
+                                ProcessState.PERCEPTIBLE
+                            } else {
+                                ProcessState.CACHED
+                            }
+
+                            resultMap[packageName] = AppProcessSignal(
+                                packageName = packageName,
+                                appName = appName,
+                                processState = state,
+                                importance = ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED,
+                                pid = 0
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+
+        // ── TIER 3: ActivityManager.getRunningServices fallback ──
         try {
             @Suppress("DEPRECATION")
             val runningServices = activityManager.getRunningServices(100)
@@ -88,10 +142,10 @@ class BackgroundActivityAnalyzer @Inject constructor(
             }
         } catch (_: Exception) { }
 
-        // ── TIER 3: PackageManager installed launcher user applications fallback ──
-        // On Android 10+, runningAppProcesses is restricted by Android OS.
-        // If resultMap is empty or has very few items, query installed launchable user apps.
-        if (resultMap.size < 3) {
+        // ── TIER 4: PackageManager installed launcher user applications fallback ──
+        // If resultMap has few items (standard on devices without usage stats permission),
+        // query installed launchable user apps so the user can see background-capable apps.
+        if (resultMap.size < 5) {
             try {
                 val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_LAUNCHER)
@@ -100,7 +154,7 @@ class BackgroundActivityAnalyzer @Inject constructor(
 
                 for (resolveInfo in resolveInfos) {
                     val packageName = resolveInfo.activityInfo.packageName
-                    if (packageName == selfPackage || packageName.startsWith("$selfPackage.") || packageName.startsWith("com.android.") || packageName == "android") {
+                    if (packageName == selfPackage || packageName.startsWith("$selfPackage.") || packageName.startsWith("com.android.systemui") || packageName == "android") {
                         continue
                     }
 
@@ -108,12 +162,12 @@ class BackgroundActivityAnalyzer @Inject constructor(
                     val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
                     val isUpdatedSystemApp = (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 
-                    if (!isSystemApp || isUpdatedSystemApp) {
+                    if (!isSystemApp || isUpdatedSystemApp || isCommonUserApp(packageName)) {
                         if (!resultMap.containsKey(packageName)) {
                             val appName = pm.getApplicationLabel(appInfo).toString()
                             val heuristicState = when {
                                 packageName.contains("whatsapp") || packageName.contains("telegram") || packageName.contains("spotify") || packageName.contains("music") -> ProcessState.SERVICE
-                                packageName.contains("chrome") || packageName.contains("browser") -> ProcessState.CACHED
+                                packageName.contains("chrome") || packageName.contains("browser") || packageName.contains("youtube") -> ProcessState.CACHED
                                 else -> ProcessState.CACHED
                             }
                             resultMap[packageName] = AppProcessSignal(
@@ -143,5 +197,13 @@ class BackgroundActivityAnalyzer @Inject constructor(
                 }
             }.thenBy { it.appName }
         )
+    }
+
+    private fun isCommonUserApp(packageName: String): Boolean {
+        val lower = packageName.lowercase()
+        return lower.contains("whatsapp") || lower.contains("telegram") || lower.contains("instagram") ||
+                lower.contains("facebook") || lower.contains("twitter") || lower.contains("spotify") ||
+                lower.contains("netflix") || lower.contains("chrome") || lower.contains("youtube") ||
+                lower.contains("amazon") || lower.contains("uber")
     }
 }

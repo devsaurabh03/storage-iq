@@ -127,7 +127,7 @@ class DashboardViewModel @Inject constructor(
             com.storage.intelligence.core.logging.AppLogger.e("DashboardViewModel", "Dashboard stream failure: ${error.message}", error)
             emit(Result.Error(error))
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Result.Loading)
+        .stateIn(viewModelScope, SharingStarted.Lazily, Result.Loading)
 
     init {
         // Smart scan on launch: Room DB serves cached data instantly via Flow,

@@ -80,7 +80,9 @@ class VideoViewModel @Inject constructor(
 
     fun loadData() {
         viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isLoading = true) }
+            if (_uiState.value.videos.isEmpty() && _uiState.value.deviceProfile == null) {
+                _uiState.update { it.copy(isLoading = true) }
+            }
             com.storage.intelligence.core.logging.AppLogger.i("VideoOptimizer", "Starting device video scan (MediaStore & Database)...")
             val profile = CodecCapabilityManager.detectCapabilities()
             val videoList = scanMediaStoreVideos()

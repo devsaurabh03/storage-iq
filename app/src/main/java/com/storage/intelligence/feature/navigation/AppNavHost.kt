@@ -157,12 +157,14 @@ fun AppNavHost(
                                     .clip(CircleShape)
                                     .background(if (isSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
                                     .clickable {
-                                        navController.navigate(item.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                saveState = true
+                                        if (currentRoute != item.route) {
+                                            navController.navigate(item.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = true
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = true
                                             }
-                                            launchSingleTop = true
-                                            restoreState = true
                                         }
                                     }
                                     .padding(horizontal = 14.dp, vertical = 6.dp),

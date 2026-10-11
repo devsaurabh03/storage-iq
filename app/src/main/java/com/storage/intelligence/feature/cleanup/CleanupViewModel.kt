@@ -24,5 +24,5 @@ class CleanupViewModel @Inject constructor(
             com.storage.intelligence.core.logging.AppLogger.e("CleanupViewModel", "Failed to load storage overview: ${error.message}", error)
             emit(Result.Error(error))
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Result.Loading)
+        .stateIn(viewModelScope, SharingStarted.Lazily, Result.Loading)
 }
